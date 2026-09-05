@@ -5,10 +5,9 @@ import 'package:path_provider/path_provider.dart';
 import '../../core/crypto/crypto_service.dart';
 
 class EncryptedMediaService {
-  final CryptoService _cryptoService;
+  final CryptoService cryptoService;
 
-  EncryptedMediaService({required CryptoService cryptoService})
-      : _cryptoService = cryptoService;
+  EncryptedMediaService({required this.cryptoService});
 
   /// Encrypts media bytes and saves ciphertext directly to local app storage
   Future<String> saveAndEncryptMedia({
@@ -16,7 +15,7 @@ class EncryptedMediaService {
     required List<int> sessionKeyBytes,
     required String fileExtension,
   }) async {
-    final encryptedData = await _cryptoService.encryptBytes(
+    final encryptedData = await cryptoService.encryptBytes(
       rawBytes: rawBytes,
       sessionKeyBytes: sessionKeyBytes,
     );
@@ -46,7 +45,7 @@ class EncryptedMediaService {
     }
 
     final encryptedBytes = await file.readAsBytes();
-    return await _cryptoService.decryptBytes(
+    return await cryptoService.decryptBytes(
       encryptedData: encryptedBytes,
       sessionKeyBytes: sessionKeyBytes,
     );

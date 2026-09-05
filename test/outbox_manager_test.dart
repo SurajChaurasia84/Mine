@@ -5,7 +5,6 @@ import 'package:mine/data/models/message_model.dart';
 import 'package:mine/data/repositories/chat_repository.dart';
 import 'package:mine/data/repositories/contact_repository.dart';
 import 'package:mine/services/connection_manager/connection_manager.dart';
-import 'package:mine/services/connection_manager/peer_connection_state.dart';
 import 'package:mine/services/signaling/signaling_client.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 

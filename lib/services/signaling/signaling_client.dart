@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'signaling_message.dart';
 
@@ -35,6 +36,9 @@ class SignalingClient {
   }) : serverUrl = initialServerUrl ?? _defaultServerUrl();
 
   static String _defaultServerUrl() {
+    if (kIsWeb) {
+      return 'ws://localhost:8080';
+    }
     // 10.0.2.2 points to host on Android Emulator; fallback to localhost
     if (Platform.isAndroid) {
       return 'ws://10.0.2.2:8080';

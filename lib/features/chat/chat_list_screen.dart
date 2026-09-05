@@ -168,7 +168,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         color: MineTheme.primaryTeal,
                         child: ListView.separated(
                           itemCount: _conversations.length,
-                          separatorBuilder: (_, __) => const Divider(
+                          separatorBuilder: (_, _) => const Divider(
                             height: 1,
                             indent: 72,
                             endIndent: 16,

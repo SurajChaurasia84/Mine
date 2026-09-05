@@ -7,14 +7,14 @@ import '../models/conversation_model.dart';
 import '../models/message_model.dart';
 
 class ChatRepository {
-  final AppDatabase _appDatabase;
+  final AppDatabase appDatabase;
   final Uuid _uuid = const Uuid();
 
-  ChatRepository({required AppDatabase appDatabase}) : _appDatabase = appDatabase;
+  ChatRepository({required this.appDatabase});
 
   /// Gets existing conversation for a contact or creates a new one
   Future<ConversationModel> getOrCreateConversation(String contactId) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final maps = await db.query(
       'conversations',
       where: 'contact_id = ?',
@@ -41,7 +41,7 @@ class ChatRepository {
 
   /// Retrieves all conversations joined with contact details for the chat list
   Future<List<ConversationModel>> getConversations() async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final results = await db.rawQuery('''
       SELECT 
         c.id AS conv_id,
@@ -88,7 +88,7 @@ class ChatRepository {
 
   /// Saves an end-to-end encrypted message (strictly ciphertext)
   Future<void> saveMessage(MessageModel message) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     await db.transaction((txn) async {
       await txn.insert(
         'messages',
@@ -111,7 +111,7 @@ class ChatRepository {
 
   /// Updates status of a message (e.g., pending -> sent -> delivered)
   Future<void> updateMessageStatus(String messageId, MessageStatus status) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     await db.update(
       'messages',
       {'status': status.name},
@@ -122,7 +122,7 @@ class ChatRepository {
 
   /// Retrieves messages for a conversation ordered chronologically
   Future<List<MessageModel>> getMessages(String conversationId) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final maps = await db.query(
       'messages',
       where: 'conversation_id = ?',
@@ -134,7 +134,7 @@ class ChatRepository {
 
   /// Retrieves the latest message for a conversation
   Future<MessageModel?> getLastMessage(String conversationId) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final maps = await db.query(
       'messages',
       where: 'conversation_id = ?',
@@ -148,7 +148,7 @@ class ChatRepository {
 
   /// Offline local outbox: queries all messages with status == 'pending'
   Future<List<MessageModel>> getPendingOutgoingMessages() async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final maps = await db.query(
       'messages',
       where: 'status = ?',
@@ -160,7 +160,7 @@ class ChatRepository {
 
   /// Saves local attachment reference
   Future<void> saveAttachment(AttachmentModel attachment) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     await db.insert(
       'attachments',
       attachment.toMap(),
@@ -170,7 +170,7 @@ class ChatRepository {
 
   /// Deletes a single message
   Future<void> deleteMessage(String messageId) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     await db.delete(
       'messages',
       where: 'id = ?',
@@ -180,7 +180,7 @@ class ChatRepository {
 
   /// Deletes an entire conversation and associated records
   Future<void> deleteConversation(String conversationId) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     await db.delete(
       'conversations',
       where: 'id = ?',

@@ -241,8 +241,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
               } else if (value == 'clear_chat') {
                 await _clearChat();
               } else if (value == 'delete_contact') {
+                final navigator = Navigator.of(context);
                 await context.read<ContactRepository>().deleteContact(_currentContact.id);
-                if (mounted) Navigator.pop(context);
+                if (mounted) navigator.pop();
               }
             },
             itemBuilder: (ctx) => [

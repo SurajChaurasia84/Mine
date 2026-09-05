@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
@@ -7,17 +8,34 @@ class AppDatabase {
   static const String _dbName = 'mine_secure_messenger.db';
   static const int _dbVersion = 1;
 
-  Database? _db;
+  final Database? db;
+  Database? _internalDb;
 
-  AppDatabase({Database? db}) : _db = db;
+  AppDatabase({this.db});
 
   Future<Database> get database async {
-    if (_db != null) return _db!;
-    _db = await _initDatabase();
-    return _db!;
+    if (db != null) return db!;
+    if (_internalDb != null) return _internalDb!;
+    _internalDb = await _initDatabase();
+    return _internalDb!;
   }
 
   Future<Database> _initDatabase() async {
+    if (kIsWeb) {
+      return await databaseFactory.openDatabase(
+        _dbName,
+        options: OpenDatabaseOptions(
+          version: _dbVersion,
+          onConfigure: (db) async {
+            await db.execute('PRAGMA foreign_keys = ON');
+          },
+          onCreate: (db, version) async {
+            await _createTables(db);
+          },
+        ),
+      );
+    }
+
     final dbPath = await getDatabasesPath();
     final path = p.join(dbPath, _dbName);
 
@@ -101,9 +119,9 @@ class AppDatabase {
   }
 
   Future<void> close() async {
-    if (_db != null && _db!.isOpen) {
-      await _db!.close();
-      _db = null;
+    if (_internalDb != null && _internalDb!.isOpen) {
+      await _internalDb!.close();
+      _internalDb = null;
     }
   }
 }

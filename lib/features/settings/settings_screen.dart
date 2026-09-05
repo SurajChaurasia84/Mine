@@ -47,6 +47,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _confirmWipeData() {
+    final appDb = context.read<AppDatabase>();
+    final keyStore = context.read<SecureKeyStore>();
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -63,8 +66,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           FilledButton(
             onPressed: () async {
               Navigator.pop(ctx);
-              await context.read<AppDatabase>().wipeDatabase();
-              await context.read<SecureKeyStore>().clearIdentity();
+              await appDb.wipeDatabase();
+              await keyStore.clearIdentity();
               SystemNavigator.pop();
             },
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),

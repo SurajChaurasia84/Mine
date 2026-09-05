@@ -4,10 +4,10 @@ import '../../core/storage/app_database.dart';
 import '../models/contact_model.dart';
 
 class ContactRepository {
-  final AppDatabase _appDatabase;
+  final AppDatabase appDatabase;
   final Uuid _uuid = const Uuid();
 
-  ContactRepository({required AppDatabase appDatabase}) : _appDatabase = appDatabase;
+  ContactRepository({required this.appDatabase});
 
   /// Creates and persists a newly paired contact.
   /// Generates a local record linking the peer's public identity and DH keys with a local nickname.
@@ -17,7 +17,7 @@ class ContactRepository {
     required String peerDhPublicKey,
     required String nickname,
   }) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final now = DateTime.now();
     final contact = ContactModel(
       id: _uuid.v4(),
@@ -44,7 +44,7 @@ class ContactRepository {
     required String contactId,
     required String newNickname,
   }) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final now = DateTime.now().toIso8601String();
     await db.update(
       'contacts',
@@ -59,7 +59,7 @@ class ContactRepository {
 
   /// Retrieves all contacts sorted by nickname
   Future<List<ContactModel>> getContacts() async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final maps = await db.query(
       'contacts',
       orderBy: 'nickname COLLATE NOCASE ASC',
@@ -69,7 +69,7 @@ class ContactRepository {
 
   /// Retrieves a contact by ID
   Future<ContactModel?> getContactById(String id) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final maps = await db.query(
       'contacts',
       where: 'id = ?',
@@ -82,7 +82,7 @@ class ContactRepository {
 
   /// Finds an existing contact by peer device ID
   Future<ContactModel?> findByPeerDeviceId(String peerDeviceId) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     final maps = await db.query(
       'contacts',
       where: 'peer_device_id = ?',
@@ -95,7 +95,7 @@ class ContactRepository {
 
   /// Deletes a contact and cascades to all its conversations and messages
   Future<void> deleteContact(String contactId) async {
-    final db = await _appDatabase.database;
+    final db = await appDatabase.database;
     await db.delete(
       'contacts',
       where: 'id = ?',

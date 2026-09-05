@@ -48,39 +48,55 @@ class _MineAppState extends State<MineApp> {
   }
 
   Future<void> _checkExistingIdentity() async {
-    final identity = await widget.secureKeyStore.getIdentity();
-    if (identity != null) {
-      _setupServices(identity);
-    }
-    if (mounted) {
-      setState(() {
-        _identity = identity;
-        _isCheckingIdentity = false;
-      });
+    KeyPairBundle? identity;
+    try {
+      identity = await widget.secureKeyStore.getIdentity();
+      if (identity != null) {
+        _setupServices(identity);
+      }
+    } catch (e) {
+      debugPrint('[MineApp] Error checking identity: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _identity = identity;
+          _isCheckingIdentity = false;
+        });
+      }
     }
   }
 
   void _setupServices(KeyPairBundle identity) {
-    _signalingClient?.dispose();
-    _connectionManager?.dispose();
+    try {
+      _signalingClient?.dispose();
+      _connectionManager?.dispose();
 
-    _signalingClient = SignalingClient(deviceId: identity.deviceId);
-    _connectionManager = ConnectionManager(
-      myIdentity: identity,
-      cryptoService: widget.cryptoService,
-      contactRepository: widget.contactRepository,
-      chatRepository: widget.chatRepository,
-      signalingClient: _signalingClient!,
-    );
+      _signalingClient = SignalingClient(deviceId: identity.deviceId);
+      _connectionManager = ConnectionManager(
+        myIdentity: identity,
+        cryptoService: widget.cryptoService,
+        contactRepository: widget.contactRepository,
+        chatRepository: widget.chatRepository,
+        signalingClient: _signalingClient!,
+      );
+    } catch (e) {
+      debugPrint('[MineApp] Error setting up services: $e');
+    }
   }
 
   void _handleSetupComplete() async {
-    final identity = await widget.secureKeyStore.getIdentity();
-    if (identity != null) {
-      _setupServices(identity);
-      setState(() {
-        _identity = identity;
-      });
+    try {
+      final identity = await widget.secureKeyStore.getIdentity();
+      if (identity != null) {
+        _setupServices(identity);
+        if (mounted) {
+          setState(() {
+            _identity = identity;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('[MineApp] Error completing setup: $e');
     }
   }
 

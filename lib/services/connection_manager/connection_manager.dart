@@ -19,10 +19,10 @@ import 'peer_connection_state.dart';
 /// - Delivery receipts
 class ConnectionManager extends ChangeNotifier {
   final KeyPairBundle myIdentity;
-  final CryptoService _cryptoService;
-  final ContactRepository _contactRepository;
-  final ChatRepository _chatRepository;
-  final SignalingClient _signalingClient;
+  final CryptoService cryptoService;
+  final ContactRepository contactRepository;
+  final ChatRepository chatRepository;
+  final SignalingClient signalingClient;
 
   // Track real-time connectivity status per peer device ID
   final Map<String, PeerConnectionState> _peerStates = {};
@@ -37,23 +37,20 @@ class ConnectionManager extends ChangeNotifier {
 
   ConnectionManager({
     required this.myIdentity,
-    required CryptoService cryptoService,
-    required ContactRepository contactRepository,
-    required ChatRepository chatRepository,
-    required SignalingClient signalingClient,
-  })  : _cryptoService = cryptoService,
-        _contactRepository = contactRepository,
-        _chatRepository = chatRepository,
-        _signalingClient = signalingClient {
+    required this.cryptoService,
+    required this.contactRepository,
+    required this.chatRepository,
+    required this.signalingClient,
+  }) {
     _init();
   }
 
   void _init() {
     // 1. Listen for incoming zero-knowledge encrypted envelopes
-    _envelopeSub = _signalingClient.onEnvelopeReceived.listen(_handleIncomingEnvelope);
+    _envelopeSub = signalingClient.onEnvelopeReceived.listen(_handleIncomingEnvelope);
 
     // 2. Listen for signaling server connectivity changes
-    _signalingStateSub = _signalingClient.onStateChanged.listen((state) {
+    _signalingStateSub = signalingClient.onStateChanged.listen((state) {
       if (state == SignalingServerState.connected) {
         _checkAllPeersStatus();
         flushOutbox();
@@ -67,7 +64,7 @@ class ConnectionManager extends ChangeNotifier {
     });
 
     // 3. Listen for peer status responses from signaling
-    _peerStatusSub = _signalingClient.onPeerStatusChanged.listen((statusMap) {
+    _peerStatusSub = signalingClient.onPeerStatusChanged.listen((statusMap) {
       final peerId = statusMap['targetId'];
       final status = statusMap['status'];
       if (peerId != null && peerId.isNotEmpty) {
@@ -89,7 +86,7 @@ class ConnectionManager extends ChangeNotifier {
     });
 
     // Connect to signaling gateway
-    _signalingClient.connect();
+    signalingClient.connect();
   }
 
   /// Returns current connectivity state for a given peer device ID
@@ -99,13 +96,13 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Actively checks status of a peer
   void checkPeer(String peerDeviceId) {
-    _signalingClient.checkPeerStatus(peerDeviceId);
+    signalingClient.checkPeerStatus(peerDeviceId);
   }
 
   void _checkAllPeersStatus() async {
-    final contacts = await _contactRepository.getContacts();
+    final contacts = await contactRepository.getContacts();
     for (final contact in contacts) {
-      _signalingClient.checkPeerStatus(contact.peerDeviceId);
+      signalingClient.checkPeerStatus(contact.peerDeviceId);
     }
   }
 
@@ -124,7 +121,7 @@ class ConnectionManager extends ChangeNotifier {
     final sessionKey = await _getOrDeriveSessionKey(contact);
 
     // Encrypt into ciphertext JSON (n, c, m)
-    final ciphertext = await _cryptoService.encryptMessage(
+    final ciphertext = await cryptoService.encryptMessage(
       plaintext: text,
       sessionKeyBytes: sessionKey,
     );
@@ -145,12 +142,12 @@ class ConnectionManager extends ChangeNotifier {
     );
 
     // Save strictly ciphertext in local database
-    await _chatRepository.saveMessage(message);
+    await chatRepository.saveMessage(message);
     notifyListeners();
 
     // Attempt delivery only if peer is online and signaling connected
     final isPeerOnline = getPeerState(contact.peerDeviceId) == PeerConnectionState.online;
-    if (isPeerOnline && _signalingClient.state == SignalingServerState.connected) {
+    if (isPeerOnline && signalingClient.state == SignalingServerState.connected) {
       try {
         final envelope = SignalingEnvelope(
           to: contact.peerDeviceId,
@@ -160,10 +157,10 @@ class ConnectionManager extends ChangeNotifier {
           messageId: messageId,
           timestamp: now,
         );
-        _signalingClient.sendEnvelope(envelope);
+        signalingClient.sendEnvelope(envelope);
 
         // Update to sent
-        await _chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
+        await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
         final sentMessage = message.copyWith(status: MessageStatus.sent);
         notifyListeners();
         return sentMessage;
@@ -177,12 +174,12 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Delivers pending outbox messages for all online peers
   Future<void> flushOutbox() async {
-    if (_signalingClient.state != SignalingServerState.connected) return;
+    if (signalingClient.state != SignalingServerState.connected) return;
 
-    final pending = await _chatRepository.getPendingOutgoingMessages();
+    final pending = await chatRepository.getPendingOutgoingMessages();
     if (pending.isEmpty) return;
 
-    final contacts = await _contactRepository.getContacts();
+    final contacts = await contactRepository.getContacts();
     final contactMap = {for (var c in contacts) c.id: c};
 
     for (final msg in pending) {
@@ -192,7 +189,7 @@ class ConnectionManager extends ChangeNotifier {
         if (conv != null && contactMap.containsKey(conv.contactId)) {
           final contact = contactMap[conv.contactId]!;
           // If peer state is unknown, check it
-          _signalingClient.checkPeerStatus(contact.peerDeviceId);
+          signalingClient.checkPeerStatus(contact.peerDeviceId);
 
           if (getPeerState(contact.peerDeviceId) == PeerConnectionState.online) {
             try {
@@ -204,8 +201,8 @@ class ConnectionManager extends ChangeNotifier {
                 messageId: msg.id,
                 timestamp: msg.timestamp,
               );
-              _signalingClient.sendEnvelope(envelope);
-              await _chatRepository.updateMessageStatus(msg.id, MessageStatus.sent);
+              signalingClient.sendEnvelope(envelope);
+              await chatRepository.updateMessageStatus(msg.id, MessageStatus.sent);
             } catch (_) {}
           }
         }
@@ -215,10 +212,10 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   Future<void> _deliverPendingForPeer(String peerDeviceId) async {
-    final contact = await _contactRepository.findByPeerDeviceId(peerDeviceId);
+    final contact = await contactRepository.findByPeerDeviceId(peerDeviceId);
     if (contact == null) return;
 
-    final pending = await _chatRepository.getPendingOutgoingMessages();
+    final pending = await chatRepository.getPendingOutgoingMessages();
     for (final msg in pending) {
       if (msg.senderId == myIdentity.deviceId) {
         try {
@@ -230,8 +227,8 @@ class ConnectionManager extends ChangeNotifier {
             messageId: msg.id,
             timestamp: msg.timestamp,
           );
-          _signalingClient.sendEnvelope(envelope);
-          await _chatRepository.updateMessageStatus(msg.id, MessageStatus.sent);
+          signalingClient.sendEnvelope(envelope);
+          await chatRepository.updateMessageStatus(msg.id, MessageStatus.sent);
         } catch (_) {}
       }
     }
@@ -239,7 +236,7 @@ class ConnectionManager extends ChangeNotifier {
   }
 
   Future<ConversationModel?> _findConversationForMessage(MessageModel msg) async {
-    final convs = await _chatRepository.getConversations();
+    final convs = await chatRepository.getConversations();
     for (final c in convs) {
       if (c.id == msg.conversationId) return c;
     }
@@ -254,7 +251,7 @@ class ConnectionManager extends ChangeNotifier {
     if (envelope.type == 'delivery_receipt') {
       final msgId = envelope.messageId;
       if (msgId != null) {
-        await _chatRepository.updateMessageStatus(msgId, MessageStatus.delivered);
+        await chatRepository.updateMessageStatus(msgId, MessageStatus.delivered);
         notifyListeners();
       }
       return;
@@ -262,18 +259,18 @@ class ConnectionManager extends ChangeNotifier {
 
     if (envelope.type == 'message') {
       // Find or verify contact
-      final contact = await _contactRepository.findByPeerDeviceId(senderDeviceId);
+      final contact = await contactRepository.findByPeerDeviceId(senderDeviceId);
       if (contact == null) {
         // Unknown sender - ignore per zero-trust pairing requirement
         return;
       }
 
-      final conversation = await _chatRepository.getOrCreateConversation(contact.id);
+      final conversation = await chatRepository.getOrCreateConversation(contact.id);
       final sessionKey = await _getOrDeriveSessionKey(contact);
 
       String decryptedText;
       try {
-        decryptedText = await _cryptoService.decryptMessage(
+        decryptedText = await cryptoService.decryptMessage(
           encryptedJson: envelope.payload,
           sessionKeyBytes: sessionKey,
         );
@@ -293,7 +290,7 @@ class ConnectionManager extends ChangeNotifier {
         decryptedContent: decryptedText,
       );
 
-      await _chatRepository.saveMessage(incomingMessage);
+      await chatRepository.saveMessage(incomingMessage);
 
       // Send back a delivery receipt
       if (envelope.messageId != null) {
@@ -304,7 +301,7 @@ class ConnectionManager extends ChangeNotifier {
           payload: '',
           messageId: envelope.messageId,
         );
-        _signalingClient.sendEnvelope(receipt);
+        signalingClient.sendEnvelope(receipt);
       }
 
       notifyListeners();
@@ -316,7 +313,7 @@ class ConnectionManager extends ChangeNotifier {
       return _sessionKeys[contact.peerDeviceId]!;
     }
 
-    final key = await _cryptoService.deriveSessionKey(
+    final key = await cryptoService.deriveSessionKey(
       myDhPrivateKeyHex: myIdentity.dhPrivateKeyHex,
       peerDhPublicKeyHex: contact.peerDhPublicKey,
     );
@@ -330,7 +327,7 @@ class ConnectionManager extends ChangeNotifier {
     if (message.decryptedContent != null) return message.decryptedContent;
     try {
       final sessionKey = await _getOrDeriveSessionKey(contact);
-      final decrypted = await _cryptoService.decryptMessage(
+      final decrypted = await cryptoService.decryptMessage(
         encryptedJson: message.ciphertext,
         sessionKeyBytes: sessionKey,
       );

@@ -168,28 +168,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            Tooltip(
-              message: isSignalingConnected ? 'Active' : 'Offline',
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: isSignalingConnected
-                      ? const Color(0xFF25D366)
-                      : const Color(0xFFFF5252),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: (isSignalingConnected
-                              ? const Color(0xFF25D366)
-                              : const Color(0xFFFF5252))
-                          .withAlpha(140),
-                      blurRadius: 4,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: isSignalingConnected
+                    ? const Color(0xFF25D366)
+                    : const Color(0xFFFF5252),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: (isSignalingConnected
+                            ? const Color(0xFF25D366)
+                            : const Color(0xFFFF5252))
+                        .withAlpha(140),
+                    blurRadius: 4,
+                    spreadRadius: 1,
+                  ),
+                ],
               ),
             ),
           ],
@@ -290,6 +287,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           ],
                         ),
                         trailing: Column(
+                          mainAxisSize: MainAxisSize.min,
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
@@ -305,19 +303,17 @@ class _ChatListScreenState extends State<ChatListScreen> {
                               const SizedBox(height: 5),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
-                                decoration: const BoxDecoration(
+                                decoration: BoxDecoration(
                                   color: MineTheme.accentGreen,
-                                  shape: BoxShape.circle,
+                                  borderRadius: BorderRadius.circular(10),
                                 ),
-                                child: Center(
-                                  child: Text(
-                                    conv.unreadCount > 99 ? '99+' : '${conv.unreadCount}',
-                                    style: const TextStyle(
-                                      color: Colors.black,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                child: Text(
+                                  conv.unreadCount > 99 ? '99+' : '${conv.unreadCount}',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.black,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
                               ),

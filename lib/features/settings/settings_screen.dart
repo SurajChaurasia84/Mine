@@ -18,12 +18,23 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _serverController;
+  String _passcode = '';
+  bool _showPasscode = false;
 
   @override
   void initState() {
     super.initState();
     final signaling = context.read<SignalingClient>();
     _serverController = TextEditingController(text: signaling.serverUrl);
+    _loadPasscode();
+  }
+
+  Future<void> _loadPasscode() async {
+    final keyStore = context.read<SecureKeyStore>();
+    final code = await keyStore.getOrGeneratePasscode();
+    if (mounted) {
+      setState(() => _passcode = code);
+    }
   }
 
   @override
@@ -44,6 +55,97 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       );
     }
+  }
+
+  void _showChangePasscodeDialog() {
+    final controller = TextEditingController(text: _passcode);
+    String? dialogError;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: MineTheme.surfaceDark,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.lock_reset, color: MineTheme.primaryTeal),
+              SizedBox(width: 10),
+              Text('Change Passcode', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Enter a new 6-digit numeric Passcode. Others will need this to add you as a contact and message you.',
+                style: TextStyle(fontSize: 13, color: MineTheme.textMuted),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                autofocus: true,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                style: const TextStyle(fontSize: 18, letterSpacing: 4.0, fontWeight: FontWeight.bold),
+                decoration: InputDecoration(
+                  counterText: '',
+                  hintText: '123456',
+                  hintStyle: const TextStyle(color: MineTheme.textMuted, letterSpacing: 4.0),
+                  filled: true,
+                  fillColor: MineTheme.backgroundDark,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  prefixIcon: const Icon(Icons.lock_outline, size: 20, color: MineTheme.primaryTeal),
+                ),
+              ),
+              if (dialogError != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  dialogError!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: MineTheme.textMuted)),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: MineTheme.primaryTeal,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                final newCode = controller.text.trim();
+                if (!RegExp(r'^\d{6}$').hasMatch(newCode)) {
+                  setDialogState(() => dialogError = 'Passcode must be 6 digits');
+                  return;
+                }
+                final keyStore = context.read<SecureKeyStore>();
+                await keyStore.setPasscode(newCode);
+                if (ctx.mounted) {
+                  Navigator.pop(ctx);
+                }
+                if (mounted) {
+                  setState(() => _passcode = newCode);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Security Passcode updated successfully!'),
+                      backgroundColor: MineTheme.surfaceDark,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Save Passcode'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _confirmWipeData() {
@@ -99,7 +201,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Device ID', style: TextStyle(fontSize: 12, color: MineTheme.textMuted)),
+                  const Text('User ID (Permanent & Immutable)', style: TextStyle(fontSize: 12, color: MineTheme.textMuted)),
                   const SizedBox(height: 4),
                   Row(
                     children: [
@@ -111,10 +213,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.copy, size: 18, color: MineTheme.textMuted),
+                        tooltip: 'Copy User ID',
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: widget.identity.deviceId));
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Device ID copied')),
+                            const SnackBar(content: Text('User ID copied to clipboard')),
                           );
                         },
                       ),
@@ -132,7 +235,90 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
 
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
+
+          // Security Passcode Section
+          const Text(
+            'PRIVACY & ACCESS PROTECTION',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: MineTheme.textMuted, letterSpacing: 1.1),
+          ),
+          const SizedBox(height: 10),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.lock_outline, size: 18, color: MineTheme.primaryTeal),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Security Passcode (6-Digit)',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: MineTheme.textLight),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: _showChangePasscodeDialog,
+                        icon: const Icon(Icons.edit, size: 14, color: MineTheme.primaryTeal),
+                        label: const Text('Change', style: TextStyle(color: MineTheme.primaryTeal, fontSize: 13)),
+                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Anyone who searches your User ID MUST enter this 6-digit Passcode. Without it, they cannot add you as a contact or message you.',
+                    style: TextStyle(fontSize: 12, color: MineTheme.textMuted, height: 1.3),
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: MineTheme.backgroundDark,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _showPasscode ? _passcode : '• • • • • •',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: _showPasscode ? 4.0 : 6.0,
+                              color: MineTheme.accentGreen,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            _showPasscode ? Icons.visibility_off : Icons.visibility,
+                            size: 18,
+                            color: MineTheme.textMuted,
+                          ),
+                          tooltip: _showPasscode ? 'Hide Passcode' : 'Show Passcode',
+                          onPressed: () => setState(() => _showPasscode = !_showPasscode),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.copy, size: 18, color: MineTheme.textMuted),
+                          tooltip: 'Copy Passcode',
+                          onPressed: () {
+                            Clipboard.setData(ClipboardData(text: _passcode));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Passcode copied to clipboard')),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 24),
 
           // Network & Signaling Gateway
           const Text(
@@ -173,7 +359,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
 
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
 
           // Security & Purge Section
           const Text(
@@ -184,10 +370,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Card(
             child: Column(
               children: [
-                ListTile(
-                  leading: const Icon(Icons.shield_outlined, color: MineTheme.primaryTeal),
-                  title: const Text('Ciphertext-At-Rest Storage'),
-                  subtitle: const Text('Local SQLite DB stores strictly encrypted bytes', style: TextStyle(fontSize: 12, color: MineTheme.textMuted)),
+                const ListTile(
+                  leading: Icon(Icons.shield_outlined, color: MineTheme.primaryTeal),
+                  title: Text('Ciphertext-At-Rest Storage'),
+                  subtitle: Text('Local SQLite DB stores strictly encrypted bytes', style: TextStyle(fontSize: 12, color: MineTheme.textMuted)),
                 ),
                 const Divider(height: 1),
                 ListTile(
@@ -204,3 +390,4 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
+

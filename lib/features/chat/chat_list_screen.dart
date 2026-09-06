@@ -141,80 +141,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
     _loadConversations();
   }
 
-  void _showAddContactDialog() {
+  void _showAddContactDialog({String? initialCode}) {
     showDialog(
       context: context,
       builder: (_) => AddContactDialog(
+        initialCode: initialCode,
         contactRepository: context.read<ContactRepository>(),
         chatRepository: context.read<ChatRepository>(),
         onContactAdded: (newContact) async {
           final chatRepo = context.read<ChatRepository>();
           final conv = await chatRepo.getOrCreateConversation(newContact.id);
           conv.contact = newContact;
+          _searchController.clear();
+          _searchFocusNode.unfocus();
+          setState(() => _searchQuery = '');
           _loadConversations();
           _openChat(conv);
         },
-      ),
-    );
-  }
-
-  bool _isAddingDevice = false;
-
-  Future<void> _addAndOpenDevice(String deviceId) async {
-    setState(() => _isAddingDevice = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Connecting to $deviceId on network...'),
-        duration: const Duration(seconds: 2),
-        backgroundColor: const Color(0xFF1F2C34),
-      ),
-    );
-
-    final connManager = context.read<ConnectionManager>();
-    final contact = await connManager.resolveAndAddContact(deviceId);
-
-    if (!mounted) return;
-    setState(() => _isAddingDevice = false);
-
-    if (contact != null) {
-      final chatRepo = context.read<ChatRepository>();
-      final conv = await chatRepo.getOrCreateConversation(contact.id);
-      conv.contact = contact;
-
-      _searchController.clear();
-      _searchFocusNode.unfocus();
-      setState(() => _searchQuery = '');
-
-      _loadConversations();
-      _openChat(conv);
-    } else {
-      _showDeviceNotReachableDialog(deviceId);
-    }
-  }
-
-  void _showDeviceNotReachableDialog(String deviceId) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: MineTheme.surfaceDark,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.info_outline, color: MineTheme.accentGreen),
-            SizedBox(width: 10),
-            Text('Device Unreachable', style: TextStyle(color: Colors.white, fontSize: 18)),
-          ],
-        ),
-        content: Text(
-          'Device "$deviceId" is not reachable on the network right now.\n\nMake sure the other person has opened the Mine app and has an active internet connection.',
-          style: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
-        ),
-        actions: [
-          TextButton(
-            child: const Text('OK', style: TextStyle(color: MineTheme.accentGreen)),
-            onPressed: () => Navigator.pop(ctx),
-          ),
-        ],
       ),
     );
   }
@@ -347,7 +290,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   },
                   style: const TextStyle(color: MineTheme.textLight, fontSize: 15),
                   decoration: InputDecoration(
-                    hintText: 'Search chats or 12-digit Device ID...',
+                    hintText: 'Search chats or 12-digit User ID...',
                     hintStyle: const TextStyle(color: Color(0xFF8696A0), fontSize: 14),
                     prefixIcon: const Icon(Icons.search, color: Color(0xFF8696A0), size: 20),
                     prefixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
@@ -371,7 +314,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 ),
               ),
             ),
-            // Quick "Add & Chat" Banner if a 12-digit Device ID is entered
+            // Quick "Add & Chat" Banner if a 12-digit User ID is entered
             if (detectedDeviceId != null && !isOwnDevice && !alreadyExists)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -393,7 +336,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: MineTheme.textLight),
                     ),
                     subtitle: const Text(
-                      '12-digit Device ID • Tap to add & message',
+                      '12-digit User ID • Tap to enter Passcode & chat',
                       style: TextStyle(fontSize: 12, color: Color(0xFF8696A0)),
                     ),
                     trailing: ElevatedButton(
@@ -404,16 +347,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                         minimumSize: Size.zero,
                       ),
-                      onPressed: _isAddingDevice ? null : () => _addAndOpenDevice(detectedDeviceId),
-                      child: _isAddingDevice
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00382B)),
-                            )
-                          : const Text('Add & Chat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      onPressed: () => _showAddContactDialog(initialCode: detectedDeviceId),
+                      child: const Text('Add & Chat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     ),
-                    onTap: _isAddingDevice ? null : () => _addAndOpenDevice(detectedDeviceId),
+                    onTap: () => _showAddContactDialog(initialCode: detectedDeviceId),
                   ),
                 ),
               )
@@ -425,7 +362,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     Icon(Icons.info_outline, size: 16, color: MineTheme.accentGreen),
                     SizedBox(width: 8),
                     Text(
-                      'This is your own Device ID',
+                      'This is your own User ID',
                       style: TextStyle(color: MineTheme.textMuted, fontSize: 13),
                     ),
                   ],

@@ -382,23 +382,22 @@ class ConnectionManager extends ChangeNotifier {
 
     if (envelope.type == 'key_request') {
       try {
-        final localPasscode = await secureKeyStore?.getOrGeneratePasscode();
+        final localPasscode = (await secureKeyStore?.getOrGeneratePasscode())?.trim();
         final incomingPasscode = envelope.payload.trim();
 
-        // If localPasscode is configured, verify incomingPasscode
-        if (localPasscode != null && localPasscode.isNotEmpty) {
-          if (incomingPasscode != localPasscode) {
-            debugPrint('[ConnectionManager] Rejected key_request from $senderDeviceId: incorrect passcode');
-            final rejectEnvelope = SignalingEnvelope(
-              to: senderDeviceId,
-              from: myIdentity.deviceId,
-              type: 'key_rejected',
-              timestamp: DateTime.now(),
-              payload: 'INCORRECT_PASSCODE',
-            );
-            signalingClient.sendEnvelope(rejectEnvelope);
-            return;
-          }
+        debugPrint('[ConnectionManager] Incoming key_request from $senderDeviceId with passcode "$incomingPasscode", local is "$localPasscode"');
+
+        if (localPasscode == null || localPasscode.isEmpty || incomingPasscode != localPasscode) {
+          debugPrint('[ConnectionManager] Rejected key_request from $senderDeviceId: incorrect passcode');
+          final rejectEnvelope = SignalingEnvelope(
+            to: senderDeviceId,
+            from: myIdentity.deviceId,
+            type: 'key_rejected',
+            timestamp: DateTime.now(),
+            payload: 'INCORRECT_PASSCODE',
+          );
+          signalingClient.sendEnvelope(rejectEnvelope);
+          return;
         }
 
         // Passcode valid -> send public keys
@@ -412,7 +411,9 @@ class ConnectionManager extends ChangeNotifier {
           payload: 'key_response',
         );
         signalingClient.sendEnvelope(replyEnvelope);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[ConnectionManager] Error handling key_request: $e');
+      }
       return;
     }
 

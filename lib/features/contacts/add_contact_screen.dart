@@ -284,80 +284,57 @@ class _AddContactScreenState extends State<AddContactScreen> {
                 ),
               ],
 
-              // 3. Nickname Section (Unclickable until verified)
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  const Text(
-                    'NICKNAME',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: MineTheme.textMuted,
-                      letterSpacing: 1.1,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (!_isVerified)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.white10,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text(
-                        'Unlock after verification',
-                        style: TextStyle(fontSize: 10, color: MineTheme.textMuted),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _nicknameController,
-                focusNode: _nicknameFocusNode,
-                enabled: _isVerified,
-                style: TextStyle(
-                  fontSize: 16,
-                  color: _isVerified ? MineTheme.textLight : MineTheme.textMuted,
-                ),
-                decoration: InputDecoration(
-                  hintText: _isVerified ? 'e.g. Rahul, Amit, Neha' : 'Verify User ID to enter nickname',
-                  hintStyle: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
-                  filled: true,
-                  fillColor: _isVerified ? MineTheme.surfaceDark : MineTheme.surfaceDark.withValues(alpha: 0.4),
-                  prefixIcon: Icon(
-                    Icons.badge_outlined,
-                    color: _isVerified ? MineTheme.primaryTeal : MineTheme.textMuted,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
+              // 3. Nickname Section (Only shown after passcode is verified)
+              if (_isVerified) ...[
+                const SizedBox(height: 20),
+                const Text(
+                  'NICKNAME',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: MineTheme.textMuted,
+                    letterSpacing: 1.1,
                   ),
                 ),
-              ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _nicknameController,
+                  focusNode: _nicknameFocusNode,
+                  autofocus: true,
+                  onChanged: (_) => setState(() {}),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: MineTheme.textLight,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. Rahul, Amit, Neha',
+                    hintStyle: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
+                    filled: true,
+                    fillColor: MineTheme.surfaceDark,
+                    prefixIcon: const Icon(
+                      Icons.badge_outlined,
+                      color: MineTheme.primaryTeal,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ],
 
               // Error Message
               if (_errorMessage != null) ...[
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.redAccent.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.error_outline, color: Colors.redAccent, size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _errorMessage!,
-                          style: const TextStyle(color: Colors.redAccent, fontSize: 13),
-                        ),
-                      ),
-                    ],
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: Text(
+                    _errorMessage!,
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
               ],
@@ -368,10 +345,16 @@ class _AddContactScreenState extends State<AddContactScreen> {
               FilledButton(
                 onPressed: _isResolving
                     ? null
-                    : (_isVerified ? _saveContact : _validateAndVerify),
+                    : (_isVerified
+                        ? (_nicknameController.text.trim().isNotEmpty ? _saveContact : null)
+                        : _validateAndVerify),
                 style: FilledButton.styleFrom(
                   backgroundColor: _isVerified ? MineTheme.accentGreen : MineTheme.primaryTeal,
                   foregroundColor: _isVerified ? const Color(0xFF00382B) : Colors.white,
+                  disabledBackgroundColor: _isVerified
+                      ? MineTheme.accentGreen.withValues(alpha: 0.3)
+                      : MineTheme.primaryTeal.withValues(alpha: 0.3),
+                  disabledForegroundColor: Colors.white38,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
@@ -382,7 +365,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                       )
                     : Text(
-                        _isVerified ? 'Save & Start Chatting' : 'Verify & Connect',
+                        _isVerified ? 'Continue' : 'Verify',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
               ),

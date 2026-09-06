@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../app/theme.dart';
 import '../../core/crypto/key_pair_bundle.dart';
 import '../../core/storage/secure_key_store.dart';
@@ -125,19 +126,34 @@ class _QrDisplayScreenState extends State<QrDisplayScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Share / Copy button
+            // Share Invite Code button
             FilledButton.icon(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: invitePayload));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Invite link copied to clipboard!'),
-                    backgroundColor: MineTheme.surfaceDark,
-                  ),
-                );
+              onPressed: () async {
+                try {
+                  final box = context.findRenderObject() as RenderBox?;
+                  // ignore: deprecated_member_use
+                  await Share.share(
+                    invitePayload,
+                    subject: 'Mine Invite Code',
+                    sharePositionOrigin: box != null
+                        ? box.localToGlobal(Offset.zero) & box.size
+                        : null,
+                  );
+                } catch (e) {
+                  // Fallback to clipboard if native share fails or unsupported
+                  await Clipboard.setData(ClipboardData(text: invitePayload));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Invite link copied to clipboard!'),
+                        backgroundColor: MineTheme.surfaceDark,
+                      ),
+                    );
+                  }
+                }
               },
-              icon: const Icon(Icons.copy_outlined),
-              label: const Text('Copy Invite Code'),
+              icon: const Icon(Icons.share_outlined),
+              label: const Text('Share Invite Code'),
               style: FilledButton.styleFrom(
                 backgroundColor: MineTheme.primaryTeal,
                 foregroundColor: Colors.white,
@@ -145,30 +161,6 @@ class _QrDisplayScreenState extends State<QrDisplayScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Privacy guarantee callout
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: MineTheme.surfaceDark.withAlpha(120),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white10),
-              ),
-              child: const Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.verified_user_outlined, size: 20, color: MineTheme.primaryTeal),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Zero-Knowledge Guarantee: This QR code contains only your public encryption keys and connection passcode. Your private keys never leave your device.',
-                      style: TextStyle(fontSize: 12, color: MineTheme.textMuted, height: 1.4),
-                    ),
-                  ),
-                ],
               ),
             ),
           ],

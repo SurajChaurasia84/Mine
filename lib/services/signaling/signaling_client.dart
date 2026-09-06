@@ -156,7 +156,9 @@ class SignalingClient extends ChangeNotifier {
         try {
           final map = jsonDecode(payloadString) as Map<String, dynamic>;
           final envelope = SignalingEnvelope.fromJson(map);
-          debugPrint('[SignalingClient] Received incoming ${envelope.type} from ${envelope.from}');
+          if (envelope.type != 'ping' && envelope.type != 'pong') {
+            debugPrint('[SignalingClient] Received incoming ${envelope.type} from ${envelope.from}');
+          }
           _envelopeController.add(envelope);
         } catch (e) {
           debugPrint('[SignalingClient] Error parsing envelope: $e');
@@ -190,7 +192,9 @@ class SignalingClient extends ChangeNotifier {
     }
     final builder = MqttClientPayloadBuilder();
     builder.addString(envelope.toJsonString());
-    debugPrint('[SignalingClient] Publishing envelope to mine/v1/inbox/${envelope.to} (type: ${envelope.type})');
+    if (envelope.type != 'ping' && envelope.type != 'pong') {
+      debugPrint('[SignalingClient] Publishing envelope to mine/v1/inbox/${envelope.to} (type: ${envelope.type})');
+    }
     _client?.publishMessage(
       'mine/v1/inbox/${envelope.to}',
       MqttQos.atLeastOnce,

@@ -161,6 +161,7 @@ class ChatInputBarState extends State<ChatInputBar> {
                             child: TextField(
                               controller: _controller,
                               focusNode: _focusNode,
+                              textCapitalization: TextCapitalization.sentences,
                               maxLines: 4,
                               minLines: 1,
                               textInputAction: TextInputAction.newline,

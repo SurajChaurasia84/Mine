@@ -1,22 +1,23 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
-/// WhatsApp-inspired subtle doodle background wallpaper.
-/// Draws an organic, low-opacity pattern of privacy, chat, and lifestyle icons.
+/// WhatsApp-authentic dark mode doodle wallpaper painter.
+/// Draws iconic lifestyle, music, gaming, and privacy vector doodles.
 class ChatDoodlePainter extends CustomPainter {
   const ChatDoodlePainter();
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Subtle greyish-teal tint matching official WhatsApp dark wallpaper
     final strokePaint = Paint()
-      ..color = const Color(0xFFFFFFFF).withAlpha(12) // ~4.7% opacity for subtle texture
+      ..color = const Color(0xFF8696A0).withAlpha(24) // ~9.4% opacity for clear, crisp texture
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.1
+      ..strokeWidth = 1.15
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
     final fillPaint = Paint()
-      ..color = const Color(0xFFFFFFFF).withAlpha(8)
+      ..color = const Color(0xFF8696A0).withAlpha(14)
       ..style = PaintingStyle.fill;
 
     const double tileSize = 140.0;
@@ -24,13 +25,13 @@ class ChatDoodlePainter extends CustomPainter {
     final int rows = (size.height / tileSize).ceil() + 1;
 
     for (int r = 0; r < rows; r++) {
-      // Stagger odd rows for a brick-like organic pattern
+      // Stagger odd rows for an organic wallpaper distribution
       final double xOffset = (r % 2 == 1) ? tileSize / 2 : 0.0;
       final double y = r * tileSize;
 
       for (int c = -1; c < cols; c++) {
         final double x = c * tileSize + xOffset;
-        final int variant = (r * 3 + c).abs() % 3;
+        final int variant = (r * 4 + c).abs() % 4;
 
         _drawTile(canvas, Offset(x, y), variant, strokePaint, fillPaint);
       }
@@ -39,30 +40,36 @@ class ChatDoodlePainter extends CustomPainter {
 
   void _drawTile(Canvas canvas, Offset origin, int variant, Paint stroke, Paint fill) {
     if (variant == 0) {
-      _drawSpeechBubble(canvas, origin + const Offset(30, 25), stroke);
+      _drawGamepad(canvas, origin + const Offset(32, 28), stroke, fill);
       _drawLock(canvas, origin + const Offset(105, 30), stroke, fill);
-      _drawStar(canvas, origin + const Offset(70, 70), stroke, fill);
-      _drawCoffeeCup(canvas, origin + const Offset(25, 110), stroke);
+      _drawStar(canvas, origin + const Offset(70, 68), stroke, fill);
+      _drawCoffeeCup(canvas, origin + const Offset(28, 110), stroke);
       _drawPaperPlane(canvas, origin + const Offset(110, 105), stroke);
     } else if (variant == 1) {
       _drawHeart(canvas, origin + const Offset(30, 30), stroke, fill);
-      _drawMusicNote(canvas, origin + const Offset(110, 25), stroke, fill);
-      _drawSmiley(canvas, origin + const Offset(70, 70), stroke);
+      _drawGuitar(canvas, origin + const Offset(110, 28), stroke);
+      _drawWhale(canvas, origin + const Offset(70, 72), stroke);
       _drawLeaf(canvas, origin + const Offset(28, 110), stroke);
       _drawClock(canvas, origin + const Offset(110, 110), stroke);
+    } else if (variant == 2) {
+      _drawUmbrella(canvas, origin + const Offset(30, 28), stroke);
+      _drawMusicNote(canvas, origin + const Offset(110, 30), stroke, fill);
+      _drawSpeechBubble(canvas, origin + const Offset(70, 70), stroke);
+      _drawLightbulb(canvas, origin + const Offset(28, 110), stroke, fill);
+      _drawSmiley(canvas, origin + const Offset(110, 108), stroke);
     } else {
-      _drawEnvelope(canvas, origin + const Offset(30, 28), stroke);
-      _drawHeadphones(canvas, origin + const Offset(110, 30), stroke);
+      _drawSpeechBubble(canvas, origin + const Offset(30, 30), stroke);
+      _drawWhale(canvas, origin + const Offset(108, 30), stroke);
       _drawLock(canvas, origin + const Offset(70, 70), stroke, fill);
-      _drawStar(canvas, origin + const Offset(25, 110), stroke, fill);
-      _drawSpeechBubble(canvas, origin + const Offset(108, 112), stroke);
+      _drawGamepad(canvas, origin + const Offset(28, 110), stroke, fill);
+      _drawCoffeeCup(canvas, origin + const Offset(110, 110), stroke);
     }
 
-    // Add tiny decorative floating dots around icons
-    canvas.drawCircle(origin + const Offset(68, 25), 1.2, fill);
-    canvas.drawCircle(origin + const Offset(18, 70), 1.0, fill);
-    canvas.drawCircle(origin + const Offset(125, 68), 1.2, fill);
-    canvas.drawCircle(origin + const Offset(68, 118), 1.0, fill);
+    // Tiny decorative star dots
+    canvas.drawCircle(origin + const Offset(68, 22), 1.0, fill);
+    canvas.drawCircle(origin + const Offset(18, 68), 1.2, fill);
+    canvas.drawCircle(origin + const Offset(124, 68), 1.0, fill);
+    canvas.drawCircle(origin + const Offset(68, 118), 1.2, fill);
   }
 
   void _drawSpeechBubble(Canvas canvas, Offset center, Paint paint) {
@@ -75,6 +82,53 @@ class ChatDoodlePainter extends CustomPainter {
       ..lineTo(center.dx - 7, center.dy + 9)
       ..lineTo(center.dx - 1, center.dy + 6);
     canvas.drawPath(path, paint);
+  }
+
+  void _drawGamepad(Canvas canvas, Offset center, Paint stroke, Paint fill) {
+    final body = Rect.fromCenter(center: center, width: 16, height: 10);
+    canvas.drawRRect(RRect.fromRectAndRadius(body, const Radius.circular(4)), stroke);
+    // D-Pad + Buttons
+    canvas.drawCircle(Offset(center.dx - 4, center.dy), 1.2, fill);
+    canvas.drawCircle(Offset(center.dx + 4, center.dy - 1.5), 1.0, fill);
+    canvas.drawCircle(Offset(center.dx + 4, center.dy + 1.5), 1.0, fill);
+  }
+
+  void _drawUmbrella(Canvas canvas, Offset center, Paint stroke) {
+    // Canopy dome
+    final dome = Rect.fromCenter(center: Offset(center.dx, center.dy - 1), width: 14, height: 12);
+    canvas.drawArc(dome, math.pi, math.pi, false, stroke);
+    canvas.drawLine(Offset(center.dx - 7, center.dy - 1), Offset(center.dx + 7, center.dy - 1), stroke);
+    // Shaft & handle hook
+    canvas.drawLine(Offset(center.dx, center.dy - 1), Offset(center.dx, center.dy + 6), stroke);
+    final hook = Rect.fromCenter(center: Offset(center.dx - 1.5, center.dy + 6), width: 3, height: 4);
+    canvas.drawArc(hook, 0, math.pi, false, stroke);
+  }
+
+  void _drawWhale(Canvas canvas, Offset center, Paint stroke) {
+    final path = Path()
+      ..moveTo(center.dx - 7, center.dy)
+      ..quadraticBezierTo(center.dx - 3, center.dy - 6, center.dx + 5, center.dy - 2)
+      ..quadraticBezierTo(center.dx + 8, center.dy - 4, center.dx + 7, center.dy)
+      ..quadraticBezierTo(center.dx + 4, center.dy + 5, center.dx - 4, center.dy + 3)
+      ..close();
+    canvas.drawPath(path, stroke);
+    // Spout water droplet
+    canvas.drawLine(Offset(center.dx + 1, center.dy - 5), Offset(center.dx + 1, center.dy - 8), stroke);
+  }
+
+  void _drawGuitar(Canvas canvas, Offset center, Paint stroke) {
+    // Body (two overlapping circles / pear shape)
+    canvas.drawCircle(Offset(center.dx - 2, center.dy + 3), 3.5, stroke);
+    canvas.drawCircle(Offset(center.dx + 1, center.dy), 2.5, stroke);
+    // Neck
+    canvas.drawLine(Offset(center.dx + 3, center.dy - 2), Offset(center.dx + 7, center.dy - 7), stroke);
+  }
+
+  void _drawLightbulb(Canvas canvas, Offset center, Paint stroke, Paint fill) {
+    canvas.drawCircle(Offset(center.dx, center.dy - 2), 4.5, stroke);
+    // Base
+    canvas.drawLine(Offset(center.dx - 2, center.dy + 3), Offset(center.dx + 2, center.dy + 3), stroke);
+    canvas.drawLine(Offset(center.dx - 1.5, center.dy + 5), Offset(center.dx + 1.5, center.dy + 5), stroke);
   }
 
   void _drawLock(Canvas canvas, Offset center, Paint stroke, Paint fill) {
@@ -136,15 +190,11 @@ class ChatDoodlePainter extends CustomPainter {
   }
 
   void _drawMusicNote(Canvas canvas, Offset center, Paint stroke, Paint fill) {
-    // Left note head
     canvas.drawCircle(Offset(center.dx - 4.5, center.dy + 4), 2.2, fill);
     canvas.drawCircle(Offset(center.dx - 4.5, center.dy + 4), 2.2, stroke);
-
-    // Right note head
     canvas.drawCircle(Offset(center.dx + 4.5, center.dy + 2), 2.2, fill);
     canvas.drawCircle(Offset(center.dx + 4.5, center.dy + 2), 2.2, stroke);
 
-    // Stems & Beam
     canvas.drawLine(Offset(center.dx - 2.5, center.dy + 4), Offset(center.dx - 2.5, center.dy - 5), stroke);
     canvas.drawLine(Offset(center.dx + 6.5, center.dy + 2), Offset(center.dx + 6.5, center.dy - 7), stroke);
     canvas.drawLine(Offset(center.dx - 2.5, center.dy - 5), Offset(center.dx + 6.5, center.dy - 7), stroke);
@@ -168,10 +218,8 @@ class ChatDoodlePainter extends CustomPainter {
 
   void _drawSmiley(Canvas canvas, Offset center, Paint paint) {
     canvas.drawCircle(center, 7.5, paint);
-    // Eyes
     canvas.drawCircle(Offset(center.dx - 2.5, center.dy - 2), 0.9, paint);
     canvas.drawCircle(Offset(center.dx + 2.5, center.dy - 2), 0.9, paint);
-    // Smile arc
     final smileRect = Rect.fromCenter(
       center: Offset(center.dx, center.dy + 0.5),
       width: 7.5,
@@ -182,7 +230,6 @@ class ChatDoodlePainter extends CustomPainter {
 
   void _drawClock(Canvas canvas, Offset center, Paint paint) {
     canvas.drawCircle(center, 7.5, paint);
-    // Hands
     canvas.drawLine(center, Offset(center.dx, center.dy - 4.5), paint);
     canvas.drawLine(center, Offset(center.dx + 3.5, center.dy), paint);
   }
@@ -193,7 +240,7 @@ class ChatDoodlePainter extends CustomPainter {
       ..quadraticBezierTo(center.dx, center.dy, center.dx + 7, center.dy)
       ..quadraticBezierTo(center.dx, center.dy, center.dx, center.dy + 7)
       ..quadraticBezierTo(center.dx, center.dy, center.dx - 7, center.dy)
-      ..quadraticBezierTo(center.dx, center.dy, center.dx, center.dy - 7)
+      ..quadraticBezierTo(center.dx, center.dy, center.dx - 7, center.dy)
       ..close();
     canvas.drawPath(path, stroke);
   }
@@ -205,44 +252,6 @@ class ChatDoodlePainter extends CustomPainter {
       ..quadraticBezierTo(center.dx + 6, center.dy + 6, center.dx - 6, center.dy + 6);
     canvas.drawPath(path, paint);
     canvas.drawLine(Offset(center.dx - 4, center.dy + 4), Offset(center.dx + 4, center.dy - 4), paint);
-  }
-
-  void _drawEnvelope(Canvas canvas, Offset center, Paint paint) {
-    final rect = Rect.fromCenter(center: center, width: 16, height: 11);
-    canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(2)), paint);
-    // Envelope fold
-    final path = Path()
-      ..moveTo(center.dx - 8, center.dy - 5.5)
-      ..lineTo(center.dx, center.dy + 0.5)
-      ..lineTo(center.dx + 8, center.dy - 5.5);
-    canvas.drawPath(path, paint);
-  }
-
-  void _drawHeadphones(Canvas canvas, Offset center, Paint paint) {
-    final bandRect = Rect.fromCenter(
-      center: Offset(center.dx, center.dy - 1),
-      width: 12,
-      height: 12,
-    );
-    canvas.drawArc(bandRect, math.pi, math.pi, false, paint);
-
-    // Left ear cup
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(center: Offset(center.dx - 6, center.dy + 2), width: 3, height: 6),
-        const Radius.circular(1.5),
-      ),
-      paint,
-    );
-
-    // Right ear cup
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(center: Offset(center.dx + 6, center.dy + 2), width: 3, height: 6),
-        const Radius.circular(1.5),
-      ),
-      paint,
-    );
   }
 
   @override

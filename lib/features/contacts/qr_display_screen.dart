@@ -1,21 +1,44 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../app/theme.dart';
 import '../../core/crypto/key_pair_bundle.dart';
+import '../../core/storage/secure_key_store.dart';
 
-class QrDisplayScreen extends StatelessWidget {
+class QrDisplayScreen extends StatefulWidget {
   final KeyPairBundle identity;
 
   const QrDisplayScreen({super.key, required this.identity});
 
   @override
+  State<QrDisplayScreen> createState() => _QrDisplayScreenState();
+}
+
+class _QrDisplayScreenState extends State<QrDisplayScreen> {
+  String? _passcode;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPasscode();
+  }
+
+  Future<void> _loadPasscode() async {
+    final keyStore = context.read<SecureKeyStore>();
+    final code = await keyStore.getOrGeneratePasscode();
+    if (mounted) {
+      setState(() => _passcode = code);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final invitePayload = 'mine://invite?p=${identity.toPublicInvitePayload()}';
+    final invitePayload = 'mine://invite?p=${widget.identity.toPublicInvitePayload(passcode: _passcode)}';
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('My Contact QR Code'),
+        title: const Text('My QR Code'),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
@@ -43,9 +66,9 @@ class QrDisplayScreen extends StatelessWidget {
                 backgroundColor: Colors.white,
               ),
             ),
-            const SizedBox(height: 28),
+            const SizedBox(height: 24),
 
-            // Device ID
+            // User ID & Passcode Card
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -57,7 +80,7 @@ class QrDisplayScreen extends StatelessWidget {
               child: Column(
                 children: [
                   const Text(
-                    'DEVICE ID',
+                    'YOUR USER ID',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
@@ -65,9 +88,9 @@ class QrDisplayScreen extends StatelessWidget {
                       letterSpacing: 1.1,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   SelectableText(
-                    identity.deviceId,
+                    widget.identity.deviceId,
                     style: const TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
@@ -75,6 +98,28 @@ class QrDisplayScreen extends StatelessWidget {
                       color: MineTheme.accentGreen,
                     ),
                   ),
+                  if (_passcode != null) ...[
+                    const Divider(height: 20),
+                    const Text(
+                      'YOUR PASSCODE',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: MineTheme.textMuted,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    SelectableText(
+                      _passcode!,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 4.0,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -119,7 +164,7 @@ class QrDisplayScreen extends StatelessWidget {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Zero-Knowledge Guarantee: This QR code contains only your public encryption keys. Your private keys never leave your device.',
+                      'Zero-Knowledge Guarantee: This QR code contains only your public encryption keys and connection passcode. Your private keys never leave your device.',
                       style: TextStyle(fontSize: 12, color: MineTheme.textMuted, height: 1.4),
                     ),
                   ),

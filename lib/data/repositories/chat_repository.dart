@@ -109,9 +109,26 @@ class ChatRepository {
     });
   }
 
-  /// Updates status of a message (e.g., pending -> sent -> delivered)
+  /// Updates status of a message (e.g., pending -> sent -> delivered -> read)
   Future<void> updateMessageStatus(String messageId, MessageStatus status) async {
     final db = await appDatabase.database;
+    final existing = await db.query(
+      'messages',
+      columns: ['status'],
+      where: 'id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      final currentName = existing.first['status'] as String?;
+      final currentStatus = MessageStatus.values.firstWhere(
+        (e) => e.name == currentName,
+        orElse: () => MessageStatus.pending,
+      );
+      if (currentStatus.index >= status.index && currentStatus != MessageStatus.failed) {
+        return;
+      }
+    }
     await db.update(
       'messages',
       {'status': status.name},
@@ -186,5 +203,21 @@ class ChatRepository {
       where: 'id = ?',
       whereArgs: [conversationId],
     );
+  }
+
+  /// Returns count of unread incoming messages for a conversation
+  Future<int> getUnreadCount(String conversationId, String myDeviceId) async {
+    final db = await appDatabase.database;
+    final normalizedMyId = myDeviceId.trim().toUpperCase();
+    final result = await db.rawQuery('''
+      SELECT COUNT(*) as cnt FROM messages
+      WHERE conversation_id = ? 
+        AND UPPER(TRIM(sender_id)) != ? 
+        AND status != ?
+    ''', [conversationId, normalizedMyId, MessageStatus.read.name]);
+    if (result.isNotEmpty) {
+      return (result.first['cnt'] as int?) ?? 0;
+    }
+    return 0;
   }
 }

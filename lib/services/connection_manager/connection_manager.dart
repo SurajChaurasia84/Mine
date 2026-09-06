@@ -400,7 +400,22 @@ class ConnectionManager extends ChangeNotifier {
           return;
         }
 
-        // Passcode valid -> send public keys
+        // Passcode valid -> Register verified peer contact and send public keys
+        if (envelope.senderIdentityPublicKey != null && envelope.senderDhPublicKey != null) {
+          final existingContact = await contactRepository.findByPeerDeviceId(senderDeviceId);
+          if (existingContact == null) {
+            final prefix = senderDeviceId.length >= 4 ? senderDeviceId.substring(0, 4) : senderDeviceId;
+            final newContact = await contactRepository.addContact(
+              peerDeviceId: senderDeviceId,
+              peerIdentityPublicKey: envelope.senderIdentityPublicKey!,
+              peerDhPublicKey: envelope.senderDhPublicKey!,
+              nickname: 'User $prefix',
+            );
+            await chatRepository.getOrCreateConversation(newContact.id);
+            notifyListeners();
+          }
+        }
+
         final replyEnvelope = SignalingEnvelope(
           to: senderDeviceId,
           from: myIdentity.deviceId,
@@ -464,9 +479,20 @@ class ConnectionManager extends ChangeNotifier {
       // Find or verify contact
       var contact = await contactRepository.findByPeerDeviceId(senderDeviceId);
       if (contact == null) {
-        // Drop message from unknown sender who hasn't been added with authorized Passcode
-        debugPrint('[ConnectionManager] Dropping message from unknown/unauthorized sender $senderDeviceId');
-        return;
+        if (envelope.senderIdentityPublicKey != null && envelope.senderDhPublicKey != null) {
+          final prefix = senderDeviceId.length >= 4 ? senderDeviceId.substring(0, 4) : senderDeviceId;
+          contact = await contactRepository.addContact(
+            peerDeviceId: senderDeviceId,
+            peerIdentityPublicKey: envelope.senderIdentityPublicKey!,
+            peerDhPublicKey: envelope.senderDhPublicKey!,
+            nickname: 'User $prefix',
+          );
+          await chatRepository.getOrCreateConversation(contact.id);
+          notifyListeners();
+        } else {
+          debugPrint('[ConnectionManager] Dropping message from unknown/unauthorized sender $senderDeviceId');
+          return;
+        }
       }
 
       final conversation = await chatRepository.getOrCreateConversation(contact.id);

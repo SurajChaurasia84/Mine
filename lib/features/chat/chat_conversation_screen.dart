@@ -286,7 +286,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                   children: [
                     Icon(Icons.edit_outlined, size: 18, color: MineTheme.textLight),
                     SizedBox(width: 10),
-                    Text('Edit Local Nickname'),
+                    Text('Edit Name'),
                   ],
                 ),
               ),
@@ -296,7 +296,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                   children: [
                     Icon(Icons.cleaning_services_outlined, size: 18, color: MineTheme.textLight),
                     SizedBox(width: 10),
-                    Text('Clear Messages'),
+                    Text('Clear Chat'),
                   ],
                 ),
               ),

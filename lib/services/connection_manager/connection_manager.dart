@@ -26,6 +26,7 @@ class ConnectionManager extends ChangeNotifier {
 
   // Track real-time connectivity status per peer device ID
   final Map<String, PeerConnectionState> _peerStates = {};
+  final Map<String, DateTime> _lastPeerActivity = {};
 
   // Cache derived session keys: peerDeviceId -> List<int>
   final Map<String, List<int>> _sessionKeys = {};
@@ -81,43 +82,141 @@ class ConnectionManager extends ChangeNotifier {
       final peerId = statusMap['targetId'];
       final status = statusMap['status'];
       if (peerId != null && peerId.isNotEmpty) {
-        final isOnline = status == 'online';
-        final newState = isOnline ? PeerConnectionState.online : PeerConnectionState.offline;
-        if (_peerStates[peerId] != newState) {
-          _peerStates[peerId] = newState;
+        if (status == 'online') {
+          _setPeerOnline(peerId);
+        } else {
+          final upper = peerId.trim().toUpperCase();
+          final raw = peerId.trim();
+          _peerStates[upper] = PeerConnectionState.offline;
+          _peerStates[raw] = PeerConnectionState.offline;
           notifyListeners();
-          if (isOnline) {
-            _deliverPendingForPeer(peerId);
-          }
         }
       }
     });
 
     if (enablePeriodicFlush) {
-      // 4. Start periodic outbox flush timer (every 10s)
-      _outboxPollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      // 4. Start periodic poll & presence refresh timer (every 15s)
+      _outboxPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
         flushOutbox();
+        _checkAllPeersStatus();
+        _pruneOfflinePeers();
       });
 
       // Connect to signaling gateway
       signalingClient.connect();
+
+      // If already connected, probe peers immediately
+      if (signalingClient.state == SignalingServerState.connected) {
+        _checkAllPeersStatus();
+      }
+    }
+  }
+
+  void _setPeerOnline(String peerDeviceId) {
+    final upper = peerDeviceId.trim().toUpperCase();
+    final raw = peerDeviceId.trim();
+    final now = DateTime.now();
+    _lastPeerActivity[upper] = now;
+    _lastPeerActivity[raw] = now;
+
+    bool stateChanged = false;
+    if (_peerStates[upper] != PeerConnectionState.online) {
+      _peerStates[upper] = PeerConnectionState.online;
+      _peerStates[raw] = PeerConnectionState.online;
+      stateChanged = true;
+    }
+    if (stateChanged) {
+      notifyListeners();
+      _deliverPendingForPeer(upper);
+      _deliverPendingForPeer(raw);
+    }
+  }
+
+  void _pruneOfflinePeers() {
+    final now = DateTime.now();
+    bool changed = false;
+    for (final entry in _peerStates.entries) {
+      if (entry.value == PeerConnectionState.online) {
+        final lastActive = _lastPeerActivity[entry.key];
+        if (lastActive != null && now.difference(lastActive).inSeconds > 45) {
+          _peerStates[entry.key] = PeerConnectionState.offline;
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      notifyListeners();
     }
   }
 
   /// Returns current connectivity state for a given peer device ID
   PeerConnectionState getPeerState(String peerDeviceId) {
-    return _peerStates[peerDeviceId] ?? PeerConnectionState.offline;
+    final upper = peerDeviceId.trim().toUpperCase();
+    final raw = peerDeviceId.trim();
+    final state = _peerStates[upper] ?? _peerStates[raw] ?? PeerConnectionState.offline;
+
+    if (state == PeerConnectionState.online) {
+      final lastActive = _lastPeerActivity[upper] ?? _lastPeerActivity[raw];
+      if (lastActive != null && DateTime.now().difference(lastActive).inSeconds > 45) {
+        return PeerConnectionState.offline;
+      }
+    }
+    return state;
   }
 
-  /// Actively checks status of a peer
-  void checkPeer(String peerDeviceId) {
+  /// Actively checks status of a peer via presence subscription and direct ping probe
+  void checkPeer(String peerDeviceId, {bool force = false}) {
     signalingClient.checkPeerStatus(peerDeviceId);
+    final upper = peerDeviceId.trim().toUpperCase();
+    final lastActive = _lastPeerActivity[upper];
+    if (force ||
+        _peerStates[upper] != PeerConnectionState.online ||
+        lastActive == null ||
+        DateTime.now().difference(lastActive).inSeconds > 20) {
+      _sendPing(peerDeviceId);
+    }
+  }
+
+  void _sendPing(String toPeerDeviceId) {
+    if (signalingClient.state != SignalingServerState.connected) return;
+    try {
+      final envelope = SignalingEnvelope(
+        to: toPeerDeviceId.trim(),
+        from: myIdentity.deviceId,
+        type: 'ping',
+        payload: 'ping',
+        timestamp: DateTime.now(),
+      );
+      signalingClient.sendEnvelope(envelope);
+    } catch (_) {}
+  }
+
+  void _sendPong(String toPeerDeviceId) {
+    if (signalingClient.state != SignalingServerState.connected) return;
+    try {
+      final envelope = SignalingEnvelope(
+        to: toPeerDeviceId.trim(),
+        from: myIdentity.deviceId,
+        type: 'pong',
+        payload: 'pong',
+        timestamp: DateTime.now(),
+      );
+      signalingClient.sendEnvelope(envelope);
+    } catch (_) {}
   }
 
   void _checkAllPeersStatus() async {
     final contacts = await contactRepository.getContacts();
+    final now = DateTime.now();
     for (final contact in contacts) {
       signalingClient.checkPeerStatus(contact.peerDeviceId);
+      final upper = contact.peerDeviceId.trim().toUpperCase();
+      final lastActive = _lastPeerActivity[upper];
+      if (_peerStates[upper] != PeerConnectionState.online ||
+          lastActive == null ||
+          now.difference(lastActive).inSeconds > 25) {
+        _sendPing(contact.peerDeviceId);
+      }
     }
   }
 
@@ -267,7 +366,16 @@ class ConnectionManager extends ChangeNotifier {
   /// Handles incoming blind envelope
   Future<void> _handleIncomingEnvelope(SignalingEnvelope envelope) async {
     final senderDeviceId = envelope.from;
-    _peerStates[senderDeviceId] = PeerConnectionState.online;
+    _setPeerOnline(senderDeviceId);
+
+    if (envelope.type == 'ping') {
+      _sendPong(senderDeviceId);
+      return;
+    }
+
+    if (envelope.type == 'pong') {
+      return;
+    }
 
     if (envelope.type == 'delivery_receipt') {
       final msgId = envelope.messageId;

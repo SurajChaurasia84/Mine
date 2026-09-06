@@ -267,21 +267,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
                               const SizedBox(width: 4),
                             ],
                             Expanded(
-                              child: Text(
+                              child: _buildSnippet(
                                 conv.lastMessageSnippet != null && conv.lastMessageSnippet!.isNotEmpty
                                     ? conv.lastMessageSnippet!
                                     : 'No messages yet',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: conv.unreadCount > 0
-                                      ? MineTheme.textLight
-                                      : (conv.lastMessageSnippet != null && conv.lastMessageSnippet!.isNotEmpty
-                                          ? MineTheme.textLight.withAlpha(180)
-                                          : MineTheme.textMuted),
-                                  fontSize: 13,
-                                  fontWeight: conv.unreadCount > 0 ? FontWeight.w500 : FontWeight.normal,
-                                ),
+                                conv.unreadCount > 0 ? MineTheme.textLight : MineTheme.textMuted,
+                                13,
+                                conv.unreadCount > 0 ? FontWeight.w500 : FontWeight.normal,
                               ),
                             ),
                           ],
@@ -292,7 +284,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             Text(
-                              DateFormatter.formatChatListTime(conv.lastMessageAt ?? conv.createdAt),
+                              DateFormatter.formatChatListTime(conv.lastMessageAt ?? conv.createdAt, context),
                               style: TextStyle(
                                 color: conv.unreadCount > 0 ? MineTheme.accentGreen : MineTheme.textMuted,
                                 fontSize: 11,
@@ -393,5 +385,65 @@ class _ChatListScreenState extends State<ChatListScreen> {
       case MessageStatus.failed:
         return const Icon(Icons.error_outline, size: 14, color: Colors.redAccent);
     }
+  }
+
+  Widget _buildSnippet(String snippet, Color textColor, double fontSize, FontWeight fontWeight) {
+    // Regex matching emoji sequences
+    final emojiRegex = RegExp(
+      r'(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])+'
+    );
+
+    final matches = emojiRegex.allMatches(snippet);
+    if (matches.isEmpty) {
+      return Text(
+        snippet,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: textColor,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+        ),
+      );
+    }
+
+    final spans = <TextSpan>[];
+    int lastIndex = 0;
+    for (final match in matches) {
+      if (match.start > lastIndex) {
+        spans.add(TextSpan(
+          text: snippet.substring(lastIndex, match.start),
+          style: TextStyle(
+            color: textColor,
+            fontSize: fontSize,
+            fontWeight: fontWeight,
+          ),
+        ));
+      }
+      spans.add(TextSpan(
+        text: match.group(0),
+        style: TextStyle(
+          fontSize: fontSize + 2.0,
+          // Color is omitted so the emoji glyph is rendered in 100% native vibrant color
+        ),
+      ));
+      lastIndex = match.end;
+    }
+    if (lastIndex < snippet.length) {
+      spans.add(TextSpan(
+        text: snippet.substring(lastIndex),
+        style: TextStyle(
+          color: textColor,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+        ),
+      ));
+    }
+
+    return Text.rich(
+      TextSpan(children: spans),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
   }
 }

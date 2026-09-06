@@ -35,6 +35,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   bool _isLoading = true;
   StreamSubscription? _messageSub;
   StreamSubscription? _receiptSub;
+  StreamSubscription? _readReceiptSub;
 
   @override
   void initState() {
@@ -57,6 +58,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
               _messages.add(msg);
             });
             _scrollToBottom();
+            // Since user is actively viewing this screen, mark incoming message as read
+            connManager.sendReadReceipt(_currentContact, [msg.id]);
           }
         }
       });
@@ -64,10 +67,34 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       _receiptSub = connManager.onDeliveryReceipt.listen((msgId) {
         final index = _messages.indexWhere((m) => m.id == msgId);
         if (index != -1) {
-          setState(() {
-            _messages[index] = _messages[index].copyWith(status: MessageStatus.delivered);
-          });
+          // Do not overwrite read status
+          if (_messages[index].status != MessageStatus.read) {
+            setState(() {
+              _messages[index] = _messages[index].copyWith(status: MessageStatus.delivered);
+            });
+          }
         }
+      });
+
+      _readReceiptSub = connManager.onReadReceipt.listen((msgId) {
+        if (!mounted) return;
+        final cleanId = msgId.trim();
+        setState(() {
+          final targetIndex = _messages.indexWhere((m) => m.id.trim() == cleanId);
+          if (targetIndex != -1) {
+            for (int i = 0; i <= targetIndex; i++) {
+              if (_messages[i].senderId.trim().toUpperCase() == connManager.myIdentity.deviceId.trim().toUpperCase()) {
+                _messages[i] = _messages[i].copyWith(status: MessageStatus.read);
+              }
+            }
+          } else {
+            for (int i = 0; i < _messages.length; i++) {
+              if (_messages[i].id.trim() == cleanId) {
+                _messages[i] = _messages[i].copyWith(status: MessageStatus.read);
+              }
+            }
+          }
+        });
       });
     });
   }
@@ -76,6 +103,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   void dispose() {
     _messageSub?.cancel();
     _receiptSub?.cancel();
+    _readReceiptSub?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -98,6 +126,16 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         _isLoading = false;
       });
       _scrollToBottom();
+    }
+
+    // Send read receipt for all incoming messages in this chat
+    final incomingIds = msgs
+        .where((m) =>
+            m.senderId.trim().toUpperCase() != connManager.myIdentity.deviceId.trim().toUpperCase())
+        .map((m) => m.id)
+        .toList();
+    if (incomingIds.isNotEmpty) {
+      connManager.sendReadReceipt(_currentContact, incomingIds);
     }
   }
 

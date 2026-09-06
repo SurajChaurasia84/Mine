@@ -18,6 +18,8 @@ enum SignalingServerState {
 class SignalingClient extends ChangeNotifier {
   String serverUrl;
   final String deviceId;
+  final String? identityPublicKeyHex;
+  final String? dhPublicKeyHex;
 
   MqttClient? _client;
   SignalingServerState _state = SignalingServerState.disconnected;
@@ -28,16 +30,21 @@ class SignalingClient extends ChangeNotifier {
   final _envelopeController = StreamController<SignalingEnvelope>.broadcast();
   final _stateController = StreamController<SignalingServerState>.broadcast();
   final _peerStatusController = StreamController<Map<String, String>>.broadcast();
+  final _directoryController = StreamController<Map<String, String>>.broadcast();
+  final Map<String, Map<String, String>> _directoryCache = {};
 
   Stream<SignalingEnvelope> get onEnvelopeReceived => _envelopeController.stream;
   Stream<SignalingServerState> get onStateChanged => _stateController.stream;
   Stream<Map<String, String>> get onPeerStatusChanged => _peerStatusController.stream;
+  Stream<Map<String, String>> get onDirectoryResolved => _directoryController.stream;
   SignalingServerState get state => _state;
 
   static const String defaultBroker = 'broker.hivemq.com';
 
   SignalingClient({
     required String deviceId,
+    this.identityPublicKeyHex,
+    this.dhPublicKeyHex,
     String? initialServerUrl,
   })  : deviceId = deviceId.trim().toUpperCase(),
         serverUrl = initialServerUrl ?? defaultBroker;
@@ -105,12 +112,14 @@ class SignalingClient extends ChangeNotifier {
       final inboxTopic = 'mine/v1/inbox/$deviceId';
       client.subscribe(inboxTopic, MqttQos.atLeastOnce);
 
-      // 2. Publish online presence (retained)
+      // 2. Publish online presence & directory card (retained)
       _publishPresence('online');
+      _publishDirectoryCard();
 
       // 3. Re-subscribe to any watched peer presence topics
       for (final peerId in _watchedPeers) {
         client.subscribe('mine/v1/presence/$peerId', MqttQos.atLeastOnce);
+        client.subscribe('mine/v1/directory/$peerId', MqttQos.atLeastOnce);
       }
 
       // 4. Listen for incoming broker publications
@@ -132,11 +141,16 @@ class SignalingClient extends ChangeNotifier {
     if (_client == null) return;
     try {
       final builder = MqttClientPayloadBuilder();
-      builder.addString(jsonEncode({
+      final map = <String, dynamic>{
         'status': status,
         'deviceId': deviceId,
         'timestamp': DateTime.now().toIso8601String(),
-      }));
+      };
+      if (identityPublicKeyHex != null && dhPublicKeyHex != null) {
+        map['ik'] = identityPublicKeyHex;
+        map['dh'] = dhPublicKeyHex;
+      }
+      builder.addString(jsonEncode(map));
       _client?.publishMessage(
         'mine/v1/presence/$deviceId',
         MqttQos.atLeastOnce,
@@ -144,6 +158,40 @@ class SignalingClient extends ChangeNotifier {
         retain: true,
       );
     } catch (_) {}
+  }
+
+  void _publishDirectoryCard() {
+    if (_client == null || identityPublicKeyHex == null || dhPublicKeyHex == null) return;
+    try {
+      final builder = MqttClientPayloadBuilder();
+      builder.addString(jsonEncode({
+        'id': deviceId,
+        'ik': identityPublicKeyHex,
+        'dh': dhPublicKeyHex,
+        'timestamp': DateTime.now().toIso8601String(),
+      }));
+      _client?.publishMessage(
+        'mine/v1/directory/$deviceId',
+        MqttQos.atLeastOnce,
+        builder.payload!,
+        retain: true,
+      );
+    } catch (_) {}
+  }
+
+  void recordPeerKeys({
+    required String peerDeviceId,
+    required String ik,
+    required String dh,
+  }) {
+    final upper = peerDeviceId.trim().toUpperCase();
+    final card = {'deviceId': upper, 'ik': ik.trim(), 'dh': dh.trim()};
+    _directoryCache[upper] = card;
+    _directoryController.add(card);
+  }
+
+  Map<String, String>? getCachedDirectory(String peerDeviceId) {
+    return _directoryCache[peerDeviceId.trim().toUpperCase()];
   }
 
   void _handleIncomingUpdates(List<MqttReceivedMessage<MqttMessage>> messages) {
@@ -163,6 +211,16 @@ class SignalingClient extends ChangeNotifier {
         } catch (e) {
           debugPrint('[SignalingClient] Error parsing envelope: $e');
         }
+      } else if (topic.startsWith('mine/v1/directory/')) {
+        try {
+          final map = jsonDecode(payloadString) as Map<String, dynamic>;
+          final targetId = (map['id'] ?? map['deviceId'] ?? topic.replaceFirst('mine/v1/directory/', '')).toString().trim().toUpperCase();
+          final ik = map['ik']?.toString() ?? '';
+          final dh = map['dh']?.toString() ?? '';
+          if (ik.isNotEmpty && dh.isNotEmpty) {
+            recordPeerKeys(peerDeviceId: targetId, ik: ik, dh: dh);
+          }
+        } catch (_) {}
       } else if (topic.startsWith('mine/v1/presence/')) {
         try {
           final map = jsonDecode(payloadString) as Map<String, dynamic>;
@@ -172,6 +230,13 @@ class SignalingClient extends ChangeNotifier {
             'targetId': targetId,
             'status': status,
           });
+          if (map.containsKey('ik') && map.containsKey('dh')) {
+            final ik = map['ik']?.toString() ?? '';
+            final dh = map['dh']?.toString() ?? '';
+            if (ik.isNotEmpty && dh.isNotEmpty) {
+              recordPeerKeys(peerDeviceId: targetId, ik: ik, dh: dh);
+            }
+          }
         } catch (_) {}
       }
     }
@@ -184,6 +249,49 @@ class SignalingClient extends ChangeNotifier {
     try {
       _client?.subscribe('mine/v1/presence/$normalizedTarget', MqttQos.atLeastOnce);
     } catch (_) {}
+  }
+
+  void queryDirectory(String targetDeviceId) {
+    final normalizedTarget = targetDeviceId.trim().toUpperCase();
+    _watchedPeers.add(normalizedTarget);
+    if (_state != SignalingServerState.connected || _client == null) return;
+    try {
+      _client?.subscribe('mine/v1/directory/$normalizedTarget', MqttQos.atLeastOnce);
+      _client?.subscribe('mine/v1/presence/$normalizedTarget', MqttQos.atLeastOnce);
+    } catch (_) {}
+  }
+
+  Future<Map<String, String>?> resolvePeerKeys(
+    String targetDeviceId, {
+    Duration timeout = const Duration(seconds: 4),
+  }) async {
+    final normalized = targetDeviceId.trim().toUpperCase();
+    if (_directoryCache.containsKey(normalized)) {
+      return _directoryCache[normalized];
+    }
+    queryDirectory(normalized);
+
+    // Also send key_request envelope as a direct probe
+    try {
+      sendEnvelope(SignalingEnvelope(
+        to: normalized,
+        from: deviceId,
+        type: 'key_request',
+        senderIdentityPublicKey: identityPublicKeyHex,
+        senderDhPublicKey: dhPublicKeyHex,
+        timestamp: DateTime.now(),
+        payload: 'key_request',
+      ));
+    } catch (_) {}
+
+    try {
+      final card = await onDirectoryResolved
+          .firstWhere((c) => c['deviceId']?.trim().toUpperCase() == normalized)
+          .timeout(timeout);
+      return card;
+    } catch (_) {
+      return _directoryCache[normalized];
+    }
   }
 
   void sendEnvelope(SignalingEnvelope envelope) {
@@ -249,6 +357,7 @@ class SignalingClient extends ChangeNotifier {
     _envelopeController.close();
     _stateController.close();
     _peerStatusController.close();
+    _directoryController.close();
     super.dispose();
   }
 }

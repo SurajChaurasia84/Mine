@@ -18,16 +18,29 @@ class MineTheme {
       useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: backgroundDark,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: WhatsAppFadePageTransitionsBuilder(),
+          TargetPlatform.iOS: WhatsAppFadePageTransitionsBuilder(),
+          TargetPlatform.windows: WhatsAppFadePageTransitionsBuilder(),
+          TargetPlatform.macOS: WhatsAppFadePageTransitionsBuilder(),
+          TargetPlatform.linux: WhatsAppFadePageTransitionsBuilder(),
+          TargetPlatform.fuchsia: WhatsAppFadePageTransitionsBuilder(),
+        },
+      ),
       colorScheme: const ColorScheme.dark(
         primary: primaryTeal,
         secondary: accentGreen,
         surface: surfaceDark,
         onSurface: textLight,
         onPrimary: Colors.white,
+        surfaceTint: Colors.transparent,
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: surfaceDark,
         foregroundColor: textLight,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
         elevation: 0,
         centerTitle: false,
         titleTextStyle: TextStyle(
@@ -44,6 +57,7 @@ class MineTheme {
       ),
       cardTheme: CardThemeData(
         color: surfaceDark,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
@@ -53,6 +67,28 @@ class MineTheme {
         color: Color(0xFF222D34),
         thickness: 0.6,
       ),
+    );
+  }
+}
+
+class WhatsAppFadePageTransitionsBuilder extends PageTransitionsBuilder {
+  const WhatsAppFadePageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    return FadeTransition(
+      opacity: CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeInOutCubic,
+        reverseCurve: Curves.easeInOutCubic,
+      ),
+      child: child,
     );
   }
 }

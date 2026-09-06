@@ -82,6 +82,7 @@ class _MineAppState extends State<MineApp> {
         contactRepository: widget.contactRepository,
         chatRepository: widget.chatRepository,
         signalingClient: _signalingClient!,
+        secureKeyStore: widget.secureKeyStore,
       );
     } catch (e) {
       debugPrint('[MineApp] Error setting up services: $e');

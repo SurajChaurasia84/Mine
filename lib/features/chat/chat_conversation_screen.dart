@@ -40,6 +40,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   StreamSubscription? _messageSub;
   StreamSubscription? _receiptSub;
   StreamSubscription? _readReceiptSub;
+  Timer? _presenceTimer;
 
   @override
   void initState() {
@@ -50,11 +51,16 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     }
     _loadMessages();
 
-    // Check status of peer and listen for real-time messages & receipts
+    // Active presence probe: immediately and periodically while viewing chat
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final connManager = context.read<ConnectionManager>();
-      connManager.checkPeer(_currentContact.peerDeviceId);
+      connManager.checkPeer(_currentContact.peerDeviceId, force: true);
+
+      _presenceTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+        if (!mounted) return;
+        connManager.checkPeer(_currentContact.peerDeviceId);
+      });
 
       _messageSub = connManager.onMessageReceived.listen((msg) {
         if (msg.conversationId == widget.conversation.id ||
@@ -108,6 +114,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
   @override
   void dispose() {
+    _presenceTimer?.cancel();
     _messageSub?.cancel();
     _receiptSub?.cancel();
     _readReceiptSub?.cancel();
@@ -434,8 +441,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
             ),
             child: Text(
               _messages.isNotEmpty
-                  ? DateFormatter.formatChatListTime(_messages.first.timestamp, context)
-                  : DateFormatter.formatChatListTime(DateTime.now(), context),
+                  ? DateFormatter.formatConversationDate(_messages.first.timestamp)
+                  : DateFormatter.formatConversationDate(DateTime.now()),
               style: const TextStyle(
                 color: MineTheme.textMuted,
                 fontSize: 11.5,

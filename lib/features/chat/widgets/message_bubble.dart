@@ -38,18 +38,18 @@ class MessageBubble extends StatelessWidget {
           }
         },
         child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
           constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.78,
+            maxWidth: MediaQuery.of(context).size.width * 0.82,
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
             color: bubbleColor,
             borderRadius: borderRadius,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withAlpha(20),
-                blurRadius: 2,
+                color: Colors.black.withAlpha(25),
+                blurRadius: 1.5,
                 offset: const Offset(0, 1),
               ),
             ],

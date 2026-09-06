@@ -1,4 +1,5 @@
 import 'contact_model.dart';
+import 'message_model.dart';
 
 /// Represents a conversation thread linked to a specific contact.
 class ConversationModel {
@@ -12,6 +13,8 @@ class ConversationModel {
   ContactModel? contact;
   String? lastMessageSnippet;
   int unreadCount;
+  MessageStatus? lastMessageStatus;
+  bool lastMessageIsMe;
 
   ConversationModel({
     required this.id,
@@ -22,6 +25,8 @@ class ConversationModel {
     this.contact,
     this.lastMessageSnippet,
     this.unreadCount = 0,
+    this.lastMessageStatus,
+    this.lastMessageIsMe = false,
   });
 
   Map<String, dynamic> toMap() {

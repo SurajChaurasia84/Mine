@@ -49,4 +49,22 @@ class DateFormatter {
     final is24 = is24HourFormat(context);
     return is24 ? _timeFormat24.format(dateTime) : _timeFormat12.format(dateTime);
   }
+
+  /// Formats date for conversation date pill ("Today", "Yesterday", or full date e.g. "June 10, 2026")
+  static String formatConversationDate(DateTime? dateTime) {
+    if (dateTime == null) return 'Today';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final messageDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
+
+    final difference = today.difference(messageDate).inDays;
+
+    if (difference == 0) {
+      return 'Today';
+    } else if (difference == 1) {
+      return 'Yesterday';
+    } else {
+      return DateFormat('MMMM d, y').format(dateTime);
+    }
+  }
 }

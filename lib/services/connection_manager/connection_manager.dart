@@ -377,6 +377,33 @@ class ConnectionManager extends ChangeNotifier {
       return;
     }
 
+    if (envelope.type == 'key_request') {
+      try {
+        final replyEnvelope = SignalingEnvelope(
+          to: senderDeviceId,
+          from: myIdentity.deviceId,
+          type: 'key_response',
+          senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
+          senderDhPublicKey: myIdentity.dhPublicKeyHex,
+          timestamp: DateTime.now(),
+          payload: 'key_response',
+        );
+        signalingClient.sendEnvelope(replyEnvelope);
+      } catch (_) {}
+      return;
+    }
+
+    if (envelope.type == 'key_response') {
+      if (envelope.senderIdentityPublicKey != null && envelope.senderDhPublicKey != null) {
+        signalingClient.recordPeerKeys(
+          peerDeviceId: senderDeviceId,
+          ik: envelope.senderIdentityPublicKey!,
+          dh: envelope.senderDhPublicKey!,
+        );
+      }
+      return;
+    }
+
     if (envelope.type == 'delivery_receipt') {
       final msgId = envelope.messageId;
       if (msgId != null) {
@@ -559,6 +586,55 @@ class ConnectionManager extends ChangeNotifier {
     } else {
       _pendingReadReceipts.putIfAbsent(targetPeer, () => <String>{}).addAll(messageIds);
     }
+  }
+
+  /// Formats and validates a 12-character device ID (e.g. UU72-7FYQ-K6N5 or UU727FYQK6N5)
+  static String? normalizeDeviceId(String input) {
+    final clean = input.replaceAll('-', '').replaceAll(' ', '').trim().toUpperCase();
+    if (clean.length == 12 && RegExp(r'^[A-Z0-9]{12}$').hasMatch(clean)) {
+      return '${clean.substring(0, 4)}-${clean.substring(4, 8)}-${clean.substring(8, 12)}';
+    }
+    return null;
+  }
+
+  /// Resolves peer public keys via retained directory or signaling probe and adds the contact
+  Future<ContactModel?> resolveAndAddContact(String rawDeviceId, {String? nickname}) async {
+    final normalized = normalizeDeviceId(rawDeviceId);
+    if (normalized == null) return null;
+
+    // 1. Check if contact already exists in local DB
+    final existing = await contactRepository.findByPeerDeviceId(normalized);
+    if (existing != null) {
+      if (nickname != null && nickname.trim().isNotEmpty && nickname.trim() != existing.nickname) {
+        await contactRepository.updateNickname(contactId: existing.id, newNickname: nickname.trim());
+      }
+      await chatRepository.getOrCreateConversation(existing.id);
+      notifyListeners();
+      return existing;
+    }
+
+    // 2. Query signaling directory / probe for keys
+    final keys = await signalingClient.resolvePeerKeys(normalized);
+    if (keys == null || keys['ik'] == null || keys['dh'] == null) {
+      return null;
+    }
+
+    // 3. Save contact
+    final nick = (nickname != null && nickname.trim().isNotEmpty)
+        ? nickname.trim()
+        : 'User ${normalized.substring(0, 4)}';
+
+    final contact = await contactRepository.addContact(
+      peerDeviceId: normalized,
+      peerIdentityPublicKey: keys['ik']!,
+      peerDhPublicKey: keys['dh']!,
+      nickname: nick,
+    );
+
+    // 4. Create conversation entry
+    await chatRepository.getOrCreateConversation(contact.id);
+    notifyListeners();
+    return contact;
   }
 
   @override

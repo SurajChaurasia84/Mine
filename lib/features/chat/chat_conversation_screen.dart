@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../app/theme.dart';
@@ -32,6 +33,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   final List<MessageModel> _messages = [];
   final ScrollController _scrollController = ScrollController();
   bool _isLoading = true;
+  StreamSubscription? _messageSub;
+  StreamSubscription? _receiptSub;
 
   @override
   void initState() {
@@ -39,15 +42,40 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     _currentContact = widget.contact;
     _loadMessages();
 
-    // Check status of peer when opening conversation
+    // Check status of peer and listen for real-time messages & receipts
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final connManager = context.read<ConnectionManager>();
       connManager.checkPeer(_currentContact.peerDeviceId);
+
+      _messageSub = connManager.onMessageReceived.listen((msg) {
+        if (msg.conversationId == widget.conversation.id ||
+            msg.senderId.trim().toUpperCase() == _currentContact.peerDeviceId.trim().toUpperCase()) {
+          final exists = _messages.any((m) => m.id == msg.id);
+          if (!exists) {
+            setState(() {
+              _messages.add(msg);
+            });
+            _scrollToBottom();
+          }
+        }
+      });
+
+      _receiptSub = connManager.onDeliveryReceipt.listen((msgId) {
+        final index = _messages.indexWhere((m) => m.id == msgId);
+        if (index != -1) {
+          setState(() {
+            _messages[index] = _messages[index].copyWith(status: MessageStatus.delivered);
+          });
+        }
+      });
     });
   }
 
   @override
   void dispose() {
+    _messageSub?.cancel();
+    _receiptSub?.cancel();
     _scrollController.dispose();
     super.dispose();
   }

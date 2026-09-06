@@ -44,13 +44,16 @@ class KeyPairBundle {
 
   /// Encodes only the PUBLIC details for pairing (QR code / Invite Code)
   /// NEVER includes any private key.
-  String toPublicInvitePayload() {
-    final map = {
+  String toPublicInvitePayload({String? passcode}) {
+    final map = <String, dynamic>{
       'v': 1,
       'id': deviceId,
       'ik': identityPublicKeyHex,
       'dh': dhPublicKeyHex,
     };
+    if (passcode != null && passcode.trim().isNotEmpty) {
+      map['pc'] = passcode.trim();
+    }
     final jsonStr = jsonEncode(map);
     return base64Url.encode(utf8.encode(jsonStr));
   }
@@ -67,11 +70,15 @@ class KeyPairBundle {
       final decoded = utf8.decode(base64Url.decode(clean));
       final map = jsonDecode(decoded) as Map<String, dynamic>;
       if (map.containsKey('id') && map.containsKey('ik') && map.containsKey('dh')) {
-        return {
+        final result = <String, String>{
           'deviceId': map['id'] as String,
           'identityPublicKey': map['ik'] as String,
           'dhPublicKey': map['dh'] as String,
         };
+        if (map.containsKey('pc')) {
+          result['passcode'] = map['pc'] as String;
+        }
+        return result;
       }
     } catch (_) {
       return null;

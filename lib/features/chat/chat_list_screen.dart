@@ -11,7 +11,7 @@ import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/contact_repository.dart';
 import '../../services/connection_manager/connection_manager.dart';
 import '../../services/signaling/signaling_client.dart';
-import '../contacts/add_contact_dialog.dart';
+import '../contacts/add_contact_screen.dart';
 import '../contacts/qr_display_screen.dart';
 import '../settings/settings_screen.dart';
 import 'chat_conversation_screen.dart';
@@ -141,23 +141,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
     _loadConversations();
   }
 
-  void _showAddContactDialog({String? initialCode}) {
-    showDialog(
-      context: context,
-      builder: (_) => AddContactDialog(
-        initialCode: initialCode,
-        contactRepository: context.read<ContactRepository>(),
-        chatRepository: context.read<ChatRepository>(),
-        onContactAdded: (newContact) async {
-          final chatRepo = context.read<ChatRepository>();
-          final conv = await chatRepo.getOrCreateConversation(newContact.id);
-          conv.contact = newContact;
-          _searchController.clear();
-          _searchFocusNode.unfocus();
-          setState(() => _searchQuery = '');
-          _loadConversations();
-          _openChat(conv);
-        },
+  void _openAddContactScreen({String? initialCode}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddContactScreen(
+          initialCode: initialCode,
+          contactRepository: context.read<ContactRepository>(),
+          chatRepository: context.read<ChatRepository>(),
+          onContactAdded: (newContact) async {
+            final chatRepo = context.read<ChatRepository>();
+            final conv = await chatRepo.getOrCreateConversation(newContact.id);
+            conv.contact = newContact;
+            _searchController.clear();
+            _searchFocusNode.unfocus();
+            setState(() => _searchQuery = '');
+            _loadConversations();
+            _openChat(conv);
+          },
+        ),
       ),
     );
   }
@@ -347,10 +349,10 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                         minimumSize: Size.zero,
                       ),
-                      onPressed: () => _showAddContactDialog(initialCode: detectedDeviceId),
+                      onPressed: () => _openAddContactScreen(initialCode: detectedDeviceId),
                       child: const Text('Add & Chat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     ),
-                    onTap: () => _showAddContactDialog(initialCode: detectedDeviceId),
+                    onTap: () => _openAddContactScreen(initialCode: detectedDeviceId),
                   ),
                 ),
               )
@@ -494,7 +496,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showAddContactDialog,
+        onPressed: _openAddContactScreen,
         tooltip: 'Add Contact',
         backgroundColor: MineTheme.accentGreen,
         shape: RoundedRectangleBorder(
@@ -541,7 +543,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
             ),
             const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: _showAddContactDialog,
+              onPressed: _openAddContactScreen,
               icon: const Icon(Icons.person_add_alt_1),
               label: const Text('Add Contact'),
               style: FilledButton.styleFrom(

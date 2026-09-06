@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../app/theme.dart';
+import '../../core/utils/avatar_colors.dart';
+import '../../core/utils/date_formatter.dart';
 import '../../data/models/contact_model.dart';
 import '../../data/models/conversation_model.dart';
 import '../../data/models/message_model.dart';
@@ -17,11 +19,13 @@ import 'widgets/message_bubble.dart';
 class ChatConversationScreen extends StatefulWidget {
   final ContactModel contact;
   final ConversationModel conversation;
+  final List<MessageModel>? initialMessages;
 
   const ChatConversationScreen({
     super.key,
     required this.contact,
     required this.conversation,
+    this.initialMessages,
   });
 
   @override
@@ -31,9 +35,8 @@ class ChatConversationScreen extends StatefulWidget {
 class _ChatConversationScreenState extends State<ChatConversationScreen> {
   late ContactModel _currentContact;
   final List<MessageModel> _messages = [];
-  final ScrollController _scrollController = ScrollController(initialScrollOffset: 1000000.0);
+  final ScrollController _scrollController = ScrollController();
   final GlobalKey<ChatInputBarState> _inputKey = GlobalKey<ChatInputBarState>();
-  bool _isLoading = true;
   StreamSubscription? _messageSub;
   StreamSubscription? _receiptSub;
   StreamSubscription? _readReceiptSub;
@@ -42,6 +45,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   void initState() {
     super.initState();
     _currentContact = widget.contact;
+    if (widget.initialMessages != null && widget.initialMessages!.isNotEmpty) {
+      _messages.addAll(widget.initialMessages!);
+    }
     _loadMessages();
 
     // Check status of peer and listen for real-time messages & receipts
@@ -124,9 +130,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       setState(() {
         _messages.clear();
         _messages.addAll(msgs);
-        _isLoading = false;
       });
-      _scrollToBottom(animate: false);
     }
 
     // Send read receipt for all incoming messages in this chat
@@ -143,15 +147,14 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   void _scrollToBottom({bool animate = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
-        final target = _scrollController.position.maxScrollExtent;
         if (animate) {
           _scrollController.animateTo(
-            target,
+            0.0,
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,
           );
         } else {
-          _scrollController.jumpTo(target);
+          _scrollController.jumpTo(0.0);
         }
       }
     });
@@ -192,31 +195,43 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   Widget build(BuildContext context) {
     final connManager = context.watch<ConnectionManager>();
     final peerState = connManager.getPeerState(_currentContact.peerDeviceId);
+    final avatarColors = AvatarColors.forName(
+      _currentContact.nickname.isNotEmpty ? _currentContact.nickname : _currentContact.id,
+    );
 
     // Refresh messages on incoming message from connection manager
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: MineTheme.backgroundDark,
+        elevation: 0,
+        scrolledUnderElevation: 0,
         titleSpacing: 0,
         title: Row(
           children: [
             CircleAvatar(
-              radius: 20,
-              backgroundColor: MineTheme.primaryDark,
+              radius: 19,
+              backgroundColor: avatarColors.background,
               child: Text(
                 _currentContact.nickname.isNotEmpty ? _currentContact.nickname[0].toUpperCase() : '?',
-                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: avatarColors.foreground,
+                  fontSize: 16,
+                ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     _currentContact.nickname,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: MineTheme.textLight),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 1),
                   Text(
                     peerState == PeerConnectionState.online ? 'online' : 'offline',
                     style: TextStyle(
@@ -234,6 +249,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         actions: [
           PopupMenuButton<String>(
             color: MineTheme.surfaceDark,
+            icon: const Icon(Icons.more_vert, color: MineTheme.textLight),
             onSelected: (value) async {
               if (value == 'edit_nickname') {
                 showDialog(
@@ -316,10 +332,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                     FocusScope.of(context).unfocus();
                     _inputKey.currentState?.hideEmoji();
                   },
-                  child: _isLoading
-                      ? const Center(child: CircularProgressIndicator(color: MineTheme.primaryTeal))
-                      : _messages.isEmpty
-                          ? ListView(
+                  child: _messages.isEmpty
+                      ? ListView(
                               controller: _scrollController,
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               children: [
@@ -335,14 +349,15 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                               ],
                             )
                           : ListView.builder(
+                              reverse: true,
                               controller: _scrollController,
                               itemCount: _messages.length + 1,
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               itemBuilder: (context, index) {
-                                if (index == 0) {
+                                if (index == _messages.length) {
                                   return _buildEncryptionNote();
                                 }
-                                final msg = _messages[index - 1];
+                                final msg = _messages[_messages.length - 1 - index];
                                 final isMe = msg.senderId != _currentContact.peerDeviceId;
                                 return MessageBubble(
                                   message: msg,
@@ -375,29 +390,61 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   }
 
   Widget _buildEncryptionNote() {
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: MineTheme.surfaceDark.withAlpha(160),
-          borderRadius: BorderRadius.circular(10),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Center(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF182229).withAlpha(220),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.lock_rounded, size: 13, color: Color(0xFFFFD279)),
+                SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    'Messages are end-to-end encrypted. No one outside of this chat can read them.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 11, color: Color(0xFFFFD279)),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.lock_rounded, size: 13, color: Color(0xFFFFD279)),
-            SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                'Messages are end-to-end encrypted. No one outside of this chat can read them.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11, color: Color(0xFFFFD279)),
+        Center(
+          child: Container(
+            margin: const EdgeInsets.only(top: 4, bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              color: const Color(0xFF182229),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(25),
+                  blurRadius: 2,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Text(
+              _messages.isNotEmpty
+                  ? DateFormatter.formatChatListTime(_messages.first.timestamp, context)
+                  : DateFormatter.formatChatListTime(DateTime.now(), context),
+              style: const TextStyle(
+                color: MineTheme.textMuted,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
               ),
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }

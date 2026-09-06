@@ -95,6 +95,8 @@ class MessageBubble extends StatelessWidget {
       case MessageStatus.sent:
         return const Icon(Icons.check, size: 14, color: MineTheme.textMuted);
       case MessageStatus.delivered:
+        return const Icon(Icons.done_all, size: 15, color: MineTheme.textMuted);
+      case MessageStatus.read:
         return const Icon(Icons.done_all, size: 15, color: MineTheme.tickBlue);
       case MessageStatus.failed:
         return const Icon(Icons.error_outline, size: 13, color: Colors.redAccent);

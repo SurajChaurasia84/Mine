@@ -104,9 +104,76 @@ class AppDatabase {
       )
     ''');
 
+    // 5. Local Device Identity table (persistent hardware key backup)
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_identity (
+        id TEXT PRIMARY KEY,
+        identity_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+
     // Indices for high performance chat queries
-    await db.execute('CREATE INDEX idx_messages_conversation ON messages(conversation_id, timestamp DESC)');
-    await db.execute('CREATE INDEX idx_conversations_contact ON conversations(contact_id)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, timestamp DESC)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_conversations_contact ON conversations(contact_id)');
+  }
+
+  /// Persists local cryptographic identity in SQLite
+  Future<void> saveLocalIdentity(String jsonStr) async {
+    final db = await database;
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_identity (
+        id TEXT PRIMARY KEY,
+        identity_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.insert(
+      'local_identity',
+      {
+        'id': 'current_identity',
+        'identity_json': jsonStr,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Retrieves persisted cryptographic identity from SQLite
+  Future<String?> getLocalIdentity() async {
+    final db = await database;
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_identity (
+        id TEXT PRIMARY KEY,
+        identity_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    final rows = await db.query(
+      'local_identity',
+      where: 'id = ?',
+      whereArgs: ['current_identity'],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['identity_json'] as String?;
+  }
+
+  /// Wipes local identity record
+  Future<void> clearLocalIdentity() async {
+    final db = await database;
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_identity (
+        id TEXT PRIMARY KEY,
+        identity_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.delete(
+      'local_identity',
+      where: 'id = ?',
+      whereArgs: ['current_identity'],
+    );
   }
 
   /// Complete local data purge
@@ -116,6 +183,7 @@ class AppDatabase {
     await db.delete('messages');
     await db.delete('conversations');
     await db.delete('contacts');
+    await clearLocalIdentity();
   }
 
   Future<void> close() async {

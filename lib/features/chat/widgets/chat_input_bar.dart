@@ -182,6 +182,13 @@ class ChatInputBarState extends State<ChatInputBar> {
                           ),
                           IconButton(
                             icon: const Icon(Icons.attach_file, color: MineTheme.textMuted, size: 22),
+                            tooltip: 'Attach',
+                            onPressed: widget.onAttach,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.camera_alt_outlined, color: MineTheme.textMuted, size: 22),
+                            tooltip: 'Camera',
                             onPressed: widget.onAttach,
                             visualDensity: VisualDensity.compact,
                           ),
@@ -193,14 +200,14 @@ class ChatInputBarState extends State<ChatInputBar> {
                   const SizedBox(width: 6),
                   Container(
                     decoration: const BoxDecoration(
-                      color: MineTheme.primaryTeal,
+                      color: MineTheme.accentGreen,
                       shape: BoxShape.circle,
                     ),
                     child: IconButton(
                       icon: Icon(
                         _hasText ? Icons.send : Icons.mic,
-                        color: Colors.white,
-                        size: 20,
+                        color: const Color(0xFF00382B),
+                        size: 21,
                       ),
                       onPressed: _hasText ? _handleSend : null,
                     ),

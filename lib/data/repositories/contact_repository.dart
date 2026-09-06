@@ -19,12 +19,13 @@ class ContactRepository {
   }) async {
     final db = await appDatabase.database;
     final now = DateTime.now();
+    final normalizedDeviceId = peerDeviceId.trim().toUpperCase();
     final contact = ContactModel(
       id: _uuid.v4(),
-      peerDeviceId: peerDeviceId,
-      peerIdentityPublicKey: peerIdentityPublicKey,
-      peerDhPublicKey: peerDhPublicKey,
-      nickname: nickname.trim().isEmpty ? 'Contact ($peerDeviceId)' : nickname.trim(),
+      peerDeviceId: normalizedDeviceId,
+      peerIdentityPublicKey: peerIdentityPublicKey.trim(),
+      peerDhPublicKey: peerDhPublicKey.trim(),
+      nickname: nickname.trim().isEmpty ? 'Contact ($normalizedDeviceId)' : nickname.trim(),
       createdAt: now,
       updatedAt: now,
     );
@@ -82,11 +83,12 @@ class ContactRepository {
 
   /// Finds an existing contact by peer device ID
   Future<ContactModel?> findByPeerDeviceId(String peerDeviceId) async {
+    final normalized = peerDeviceId.trim().toUpperCase();
     final db = await appDatabase.database;
     final maps = await db.query(
       'contacts',
-      where: 'peer_device_id = ?',
-      whereArgs: [peerDeviceId],
+      where: 'UPPER(peer_device_id) = ?',
+      whereArgs: [normalized],
       limit: 1,
     );
     if (maps.isEmpty) return null;

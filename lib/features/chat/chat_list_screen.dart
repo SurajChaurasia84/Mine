@@ -35,12 +35,17 @@ class _ChatListScreenState extends State<ChatListScreen> {
   VoidCallback? _connListener;
 
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
     _loadConversations();
+
+    _searchFocusNode.addListener(() {
+      if (mounted) setState(() {});
+    });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -69,6 +74,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (_connListener != null) {
       _connManager?.removeListener(_connListener!);
     }
+    _searchFocusNode.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -260,6 +266,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 alignment: Alignment.center,
                 child: TextField(
                   controller: _searchController,
+                  focusNode: _searchFocusNode,
                   textAlignVertical: TextAlignVertical.center,
                   textInputAction: TextInputAction.search,
                   cursorColor: MineTheme.accentGreen,
@@ -275,12 +282,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
                     prefixIcon: const Icon(Icons.search, color: Color(0xFF8696A0), size: 20),
                     prefixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                     suffixIconConstraints: const BoxConstraints(minWidth: 38, minHeight: 44),
-                    suffixIcon: _searchQuery.isNotEmpty
+                    suffixIcon: (_searchQuery.isNotEmpty || _searchFocusNode.hasFocus)
                         ? IconButton(
                             icon: const Icon(Icons.close, color: Color(0xFF8696A0), size: 18),
                             padding: EdgeInsets.zero,
                             onPressed: () {
                               _searchController.clear();
+                              _searchFocusNode.unfocus();
+                              FocusScope.of(context).unfocus();
                               setState(() => _searchQuery = '');
                             },
                           )
@@ -309,6 +318,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           onRefresh: _loadConversations,
                           color: MineTheme.primaryTeal,
                           child: ListView.separated(
+                            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                             itemCount: filteredConvs.length,
                             separatorBuilder: (_, _) => const Divider(
                               height: 1,

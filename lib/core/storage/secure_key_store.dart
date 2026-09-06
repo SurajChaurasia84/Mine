@@ -12,9 +12,11 @@ class SecureKeyStore {
   final FlutterSecureStorage _storage;
   final AppDatabase? appDatabase;
   static const String _identityKey = 'mine_identity_bundle_v1';
+  static const String _passcodeKey = 'mine_security_passcode_v1';
   static final Map<String, String> _webSessionCache = {};
 
   KeyPairBundle? _cachedIdentity;
+  String? _cachedPasscode;
 
   SecureKeyStore({
     FlutterSecureStorage? storage,
@@ -35,6 +37,62 @@ class SecureKeyStore {
     if (_cachedIdentity != null) return true;
     final id = await getIdentity();
     return id != null;
+  }
+
+  /// Retrieves or generates a permanent 6-digit security passcode for this device
+  Future<String> getOrGeneratePasscode() async {
+    if (_cachedPasscode != null && _cachedPasscode!.length == 6) {
+      return _cachedPasscode!;
+    }
+
+    String? code = await getPasscode();
+    if (code != null && RegExp(r'^\d{6}$').hasMatch(code)) {
+      _cachedPasscode = code;
+      return code;
+    }
+
+    // Generate a secure random 6-digit passcode (100000 - 999999)
+    final randomDigits = (100000 + (DateTime.now().microsecondsSinceEpoch % 900000)).toString();
+    await setPasscode(randomDigits);
+    _cachedPasscode = randomDigits;
+    return randomDigits;
+  }
+
+  /// Retrieves the saved 6-digit passcode if one exists
+  Future<String?> getPasscode() async {
+    if (_cachedPasscode != null) return _cachedPasscode;
+
+    String? code;
+    try {
+      code = await _storage.read(key: _passcodeKey);
+    } catch (e) {
+      debugPrint('[SecureKeyStore] Passcode secure read warning: $e');
+    }
+
+    if (code == null || code.isEmpty) {
+      code = _webSessionCache[_passcodeKey];
+    }
+
+    if (code != null && code.isNotEmpty) {
+      _cachedPasscode = code;
+    }
+    return code;
+  }
+
+  /// Sets or updates the 6-digit security passcode (does NOT affect Device ID or keys)
+  Future<void> setPasscode(String passcode) async {
+    final clean = passcode.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(clean)) {
+      throw ArgumentError('Passcode must be exactly 6 digits');
+    }
+    _cachedPasscode = clean;
+    _webSessionCache[_passcodeKey] = clean;
+
+    try {
+      await _storage.write(key: _passcodeKey, value: clean);
+    } catch (e) {
+      debugPrint('[SecureKeyStore] Passcode save error: $e');
+    }
   }
 
   /// Retrieves the saved cryptographic identity bundle
@@ -115,7 +173,9 @@ class SecureKeyStore {
   /// Cryptographic identity wipe for complete app reset
   Future<void> clearIdentity() async {
     _cachedIdentity = null;
+    _cachedPasscode = null;
     _webSessionCache.remove(_identityKey);
+    _webSessionCache.remove(_passcodeKey);
 
     try {
       await appDatabase?.clearLocalIdentity();
@@ -123,6 +183,7 @@ class SecureKeyStore {
 
     try {
       await _storage.delete(key: _identityKey);
+      await _storage.delete(key: _passcodeKey);
     } catch (_) {}
   }
 }

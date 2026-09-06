@@ -33,7 +33,14 @@ class ConnectionManager extends ChangeNotifier {
   StreamSubscription? _envelopeSub;
   StreamSubscription? _signalingStateSub;
   StreamSubscription? _peerStatusSub;
+  final bool enablePeriodicFlush;
   Timer? _outboxPollTimer;
+
+  final _messageStreamController = StreamController<MessageModel>.broadcast();
+  final _receiptStreamController = StreamController<String>.broadcast();
+
+  Stream<MessageModel> get onMessageReceived => _messageStreamController.stream;
+  Stream<String> get onDeliveryReceipt => _receiptStreamController.stream;
 
   ConnectionManager({
     required this.myIdentity,
@@ -41,6 +48,7 @@ class ConnectionManager extends ChangeNotifier {
     required this.contactRepository,
     required this.chatRepository,
     required this.signalingClient,
+    this.enablePeriodicFlush = true,
   }) {
     _init();
   }
@@ -54,6 +62,7 @@ class ConnectionManager extends ChangeNotifier {
       if (state == SignalingServerState.connected) {
         _checkAllPeersStatus();
         flushOutbox();
+        notifyListeners();
       } else {
         // Mark all peers offline/reconnecting if signaling gateway drops
         for (final peerId in _peerStates.keys) {
@@ -80,13 +89,15 @@ class ConnectionManager extends ChangeNotifier {
       }
     });
 
-    // 4. Start periodic outbox flush timer (every 10s)
-    _outboxPollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      flushOutbox();
-    });
+    if (enablePeriodicFlush) {
+      // 4. Start periodic outbox flush timer (every 10s)
+      _outboxPollTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+        flushOutbox();
+      });
 
-    // Connect to signaling gateway
-    signalingClient.connect();
+      // Connect to signaling gateway
+      signalingClient.connect();
+    }
   }
 
   /// Returns current connectivity state for a given peer device ID
@@ -145,9 +156,8 @@ class ConnectionManager extends ChangeNotifier {
     await chatRepository.saveMessage(message);
     notifyListeners();
 
-    // Attempt delivery only if peer is online and signaling connected
-    final isPeerOnline = getPeerState(contact.peerDeviceId) == PeerConnectionState.online;
-    if (isPeerOnline && signalingClient.state == SignalingServerState.connected) {
+    // Attempt delivery if connected to signaling gateway
+    if (signalingClient.state == SignalingServerState.connected) {
       try {
         final envelope = SignalingEnvelope(
           to: contact.peerDeviceId,
@@ -155,15 +165,20 @@ class ConnectionManager extends ChangeNotifier {
           type: 'message',
           payload: ciphertext,
           messageId: messageId,
+          senderDhPublicKey: myIdentity.dhPublicKeyHex,
+          senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
           timestamp: now,
         );
         signalingClient.sendEnvelope(envelope);
 
-        // Update to sent
-        await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
-        final sentMessage = message.copyWith(status: MessageStatus.sent);
-        notifyListeners();
-        return sentMessage;
+        final isPeerOnline = getPeerState(contact.peerDeviceId) == PeerConnectionState.online;
+        if (isPeerOnline) {
+          // Update to sent
+          await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
+          final sentMessage = message.copyWith(status: MessageStatus.sent);
+          notifyListeners();
+          return sentMessage;
+        }
       } catch (_) {
         // Remains pending in outbox
       }
@@ -199,6 +214,8 @@ class ConnectionManager extends ChangeNotifier {
                 type: 'message',
                 payload: msg.ciphertext,
                 messageId: msg.id,
+                senderDhPublicKey: myIdentity.dhPublicKeyHex,
+                senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
                 timestamp: msg.timestamp,
               );
               signalingClient.sendEnvelope(envelope);
@@ -225,6 +242,8 @@ class ConnectionManager extends ChangeNotifier {
             type: 'message',
             payload: msg.ciphertext,
             messageId: msg.id,
+            senderDhPublicKey: myIdentity.dhPublicKeyHex,
+            senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
             timestamp: msg.timestamp,
           );
           signalingClient.sendEnvelope(envelope);
@@ -252,6 +271,7 @@ class ConnectionManager extends ChangeNotifier {
       final msgId = envelope.messageId;
       if (msgId != null) {
         await chatRepository.updateMessageStatus(msgId, MessageStatus.delivered);
+        _receiptStreamController.add(msgId);
         notifyListeners();
       }
       return;
@@ -259,10 +279,21 @@ class ConnectionManager extends ChangeNotifier {
 
     if (envelope.type == 'message') {
       // Find or verify contact
-      final contact = await contactRepository.findByPeerDeviceId(senderDeviceId);
+      var contact = await contactRepository.findByPeerDeviceId(senderDeviceId);
       if (contact == null) {
-        // Unknown sender - ignore per zero-trust pairing requirement
-        return;
+        // Auto-register peer contact if public keys are provided in envelope
+        if (envelope.senderDhPublicKey != null && envelope.senderIdentityPublicKey != null) {
+          final prefix = senderDeviceId.length >= 4 ? senderDeviceId.substring(0, 4) : senderDeviceId;
+          contact = await contactRepository.addContact(
+            peerDeviceId: senderDeviceId,
+            peerIdentityPublicKey: envelope.senderIdentityPublicKey!,
+            peerDhPublicKey: envelope.senderDhPublicKey!,
+            nickname: 'Contact $prefix',
+          );
+        } else {
+          // Unknown sender without public keys - cannot decrypt
+          return;
+        }
       }
 
       final conversation = await chatRepository.getOrCreateConversation(contact.id);
@@ -304,6 +335,7 @@ class ConnectionManager extends ChangeNotifier {
         signalingClient.sendEnvelope(receipt);
       }
 
+      _messageStreamController.add(incomingMessage);
       notifyListeners();
     }
   }
@@ -344,6 +376,8 @@ class ConnectionManager extends ChangeNotifier {
     _signalingStateSub?.cancel();
     _peerStatusSub?.cancel();
     _outboxPollTimer?.cancel();
+    _messageStreamController.close();
+    _receiptStreamController.close();
     super.dispose();
   }
 }

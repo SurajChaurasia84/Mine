@@ -186,16 +186,6 @@ class SignalingClient extends ChangeNotifier {
         } catch (e) {
           debugPrint('[SignalingClient] Error parsing envelope: $e');
         }
-      } else if (topic.startsWith('mine/v1/directory/')) {
-        try {
-          final map = jsonDecode(payloadString) as Map<String, dynamic>;
-          final targetId = (map['id'] ?? map['deviceId'] ?? topic.replaceFirst('mine/v1/directory/', '')).toString().trim().toUpperCase();
-          final ik = map['ik']?.toString() ?? '';
-          final dh = map['dh']?.toString() ?? '';
-          if (ik.isNotEmpty && dh.isNotEmpty) {
-            recordPeerKeys(peerDeviceId: targetId, ik: ik, dh: dh);
-          }
-        } catch (_) {}
       } else if (topic.startsWith('mine/v1/presence/')) {
         try {
           final map = jsonDecode(payloadString) as Map<String, dynamic>;
@@ -205,13 +195,6 @@ class SignalingClient extends ChangeNotifier {
             'targetId': targetId,
             'status': status,
           });
-          if (map.containsKey('ik') && map.containsKey('dh')) {
-            final ik = map['ik']?.toString() ?? '';
-            final dh = map['dh']?.toString() ?? '';
-            if (ik.isNotEmpty && dh.isNotEmpty) {
-              recordPeerKeys(peerDeviceId: targetId, ik: ik, dh: dh);
-            }
-          }
         } catch (_) {}
       }
     }
@@ -226,16 +209,6 @@ class SignalingClient extends ChangeNotifier {
     } catch (_) {}
   }
 
-  void queryDirectory(String targetDeviceId) {
-    final normalizedTarget = targetDeviceId.trim().toUpperCase();
-    _watchedPeers.add(normalizedTarget);
-    if (_state != SignalingServerState.connected || _client == null) return;
-    try {
-      _client?.subscribe('mine/v1/directory/$normalizedTarget', MqttQos.atLeastOnce);
-      _client?.subscribe('mine/v1/presence/$normalizedTarget', MqttQos.atLeastOnce);
-    } catch (_) {}
-  }
-
   Future<Map<String, String>?> resolvePeerKeys(
     String targetDeviceId, {
     String? passcode,
@@ -243,12 +216,8 @@ class SignalingClient extends ChangeNotifier {
   }) async {
     final normalized = targetDeviceId.trim().toUpperCase();
 
-    // Check if we already have verified keys in memory cache
-    if (_directoryCache.containsKey(normalized)) {
-      return _directoryCache[normalized];
-    }
-
-    queryDirectory(normalized);
+    // Check peer status online/offline
+    checkPeerStatus(normalized);
 
     // Send key_request envelope containing the entered 6-digit passcode as payload
     try {
@@ -263,44 +232,40 @@ class SignalingClient extends ChangeNotifier {
       ));
     } catch (_) {}
 
-    // Wait for either key_response or key_rejected
+    // Wait strictly for peer device to respond with key_response or key_rejected
     try {
-      final envelopeFuture = onEnvelopeReceived.firstWhere((env) {
-        final from = env.from.trim().toUpperCase();
-        return from == normalized && (env.type == 'key_response' || env.type == 'key_rejected');
-      });
+      final env = await onEnvelopeReceived.firstWhere((e) {
+        final from = e.from.trim().toUpperCase();
+        return from == normalized && (e.type == 'key_response' || e.type == 'key_rejected');
+      }).timeout(timeout);
 
-      final directoryFuture = onDirectoryResolved
-          .firstWhere((c) => c['deviceId']?.trim().toUpperCase() == normalized);
+      if (env.type == 'key_rejected') {
+        debugPrint('[SignalingClient] Handshake rejected: Incorrect passcode from $normalized');
+        throw const FormatException('INCORRECT_PASSCODE');
+      }
 
-      final result = await Future.any([
-        envelopeFuture.then((env) {
-          if (env.type == 'key_rejected') {
-            throw const FormatException('INCORRECT_PASSCODE');
-          }
-          if (env.senderIdentityPublicKey != null && env.senderDhPublicKey != null) {
-            recordPeerKeys(
-              peerDeviceId: normalized,
-              ik: env.senderIdentityPublicKey!,
-              dh: env.senderDhPublicKey!,
-            );
-            return {
-              'deviceId': normalized,
-              'ik': env.senderIdentityPublicKey!,
-              'dh': env.senderDhPublicKey!,
-            };
-          }
-          return null;
-        }),
-        directoryFuture,
-      ]).timeout(timeout);
+      if (env.type == 'key_response' &&
+          env.senderIdentityPublicKey != null &&
+          env.senderDhPublicKey != null) {
+        recordPeerKeys(
+          peerDeviceId: normalized,
+          ik: env.senderIdentityPublicKey!,
+          dh: env.senderDhPublicKey!,
+        );
+        return {
+          'deviceId': normalized,
+          'ik': env.senderIdentityPublicKey!,
+          'dh': env.senderDhPublicKey!,
+        };
+      }
 
-      return result;
+      return null;
     } catch (e) {
       if (e is FormatException && e.message == 'INCORRECT_PASSCODE') {
         rethrow;
       }
-      return _directoryCache[normalized];
+      debugPrint('[SignalingClient] resolvePeerKeys timeout/error for $normalized: $e');
+      return null;
     }
   }
 

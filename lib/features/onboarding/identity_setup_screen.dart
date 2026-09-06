@@ -25,6 +25,7 @@ class IdentitySetupScreen extends StatefulWidget {
 class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
   bool _isGenerating = true;
   KeyPairBundle? _identity;
+  String? _passcode;
 
   @override
   void initState() {
@@ -34,6 +35,7 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
 
   Future<void> _initIdentity() async {
     KeyPairBundle? identity;
+    String? passcode;
     try {
       identity = await widget.secureKeyStore.getIdentity();
       if (identity == null) {
@@ -41,13 +43,16 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
         identity = await widget.cryptoService.generateIdentity();
         await widget.secureKeyStore.saveIdentity(identity);
       }
+      passcode = await widget.secureKeyStore.getOrGeneratePasscode();
     } catch (e) {
       debugPrint('[IdentitySetup] Error creating identity: $e');
       identity ??= await widget.cryptoService.generateIdentity();
+      passcode = await widget.secureKeyStore.getOrGeneratePasscode();
     } finally {
       if (mounted) {
         setState(() {
           _identity = identity;
+          _passcode = passcode;
           _isGenerating = false;
         });
       }
@@ -135,30 +140,30 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
             ),
           ),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
         const Text(
           'Anonymous Identity Ready',
           textAlign: TextAlign.center,
           style: TextStyle(
-            fontSize: 24,
+            fontSize: 22,
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         const Text(
-          'No phone number. No email. No central account.\nOnly math and cryptography.',
+          'No phone number. No email. No central account.\nProtected with 6-digit Passcode & cryptography.',
           textAlign: TextAlign.center,
           style: TextStyle(
-            fontSize: 14,
+            fontSize: 13,
             color: MineTheme.textMuted,
-            height: 1.4,
+            height: 1.3,
           ),
         ),
-        const SizedBox(height: 32),
+        const SizedBox(height: 24),
 
-        // Device ID card
+        // User ID & Passcode card
         Container(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             color: MineTheme.surfaceDark,
             borderRadius: BorderRadius.circular(16),
@@ -167,36 +172,46 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
           child: Column(
             children: [
               const Text(
-                'YOUR DEVICE ID',
+                'YOUR USER ID',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: FontWeight.w700,
                   color: MineTheme.textMuted,
                   letterSpacing: 1.2,
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               SelectableText(
                 id.deviceId,
                 style: const TextStyle(
-                  fontSize: 26,
+                  fontSize: 22,
                   fontWeight: FontWeight.bold,
-                  letterSpacing: 2.0,
+                  letterSpacing: 1.5,
                   color: MineTheme.accentGreen,
                 ),
               ),
-              const SizedBox(height: 8),
-              const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.vpn_key_outlined, size: 14, color: MineTheme.textMuted),
-                  SizedBox(width: 6),
-                  Text(
-                    'Ed25519 + X25519 Hardware Keys',
-                    style: TextStyle(fontSize: 12, color: MineTheme.textMuted),
+              if (_passcode != null) ...[
+                const Divider(height: 18),
+                const Text(
+                  'YOUR 6-DIGIT PASSCODE',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: MineTheme.textMuted,
+                    letterSpacing: 1.2,
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 4),
+                SelectableText(
+                  _passcode!,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 4.0,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -232,7 +247,7 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
             Expanded(
               child: OutlinedButton.icon(
                 onPressed: () {
-                  final payload = id.toPublicInvitePayload();
+                  final payload = id.toPublicInvitePayload(passcode: _passcode);
                   Clipboard.setData(ClipboardData(text: 'mine://invite?p=$payload'));
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(

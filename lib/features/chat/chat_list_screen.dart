@@ -158,6 +158,67 @@ class _ChatListScreenState extends State<ChatListScreen> {
     );
   }
 
+  bool _isAddingDevice = false;
+
+  Future<void> _addAndOpenDevice(String deviceId) async {
+    setState(() => _isAddingDevice = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Connecting to $deviceId on network...'),
+        duration: const Duration(seconds: 2),
+        backgroundColor: const Color(0xFF1F2C34),
+      ),
+    );
+
+    final connManager = context.read<ConnectionManager>();
+    final contact = await connManager.resolveAndAddContact(deviceId);
+
+    if (!mounted) return;
+    setState(() => _isAddingDevice = false);
+
+    if (contact != null) {
+      final chatRepo = context.read<ChatRepository>();
+      final conv = await chatRepo.getOrCreateConversation(contact.id);
+      conv.contact = contact;
+
+      _searchController.clear();
+      _searchFocusNode.unfocus();
+      setState(() => _searchQuery = '');
+
+      _loadConversations();
+      _openChat(conv);
+    } else {
+      _showDeviceNotReachableDialog(deviceId);
+    }
+  }
+
+  void _showDeviceNotReachableDialog(String deviceId) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MineTheme.surfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.info_outline, color: MineTheme.accentGreen),
+            SizedBox(width: 10),
+            Text('Device Unreachable', style: TextStyle(color: Colors.white, fontSize: 18)),
+          ],
+        ),
+        content: Text(
+          'Device "$deviceId" is not reachable on the network right now.\n\nMake sure the other person has opened the Mine app and has an active internet connection.',
+          style: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('OK', style: TextStyle(color: MineTheme.accentGreen)),
+            onPressed: () => Navigator.pop(ctx),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Listen to ConnectionManager to refresh when new messages arrive
@@ -165,12 +226,21 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final signalingClient = context.watch<SignalingClient>();
     final isSignalingConnected = signalingClient.state == SignalingServerState.connected;
 
+    final detectedDeviceId = ConnectionManager.normalizeDeviceId(_searchQuery);
+    final isOwnDevice = detectedDeviceId != null &&
+        detectedDeviceId == widget.identity.deviceId.trim().toUpperCase();
+    final alreadyExists = detectedDeviceId != null &&
+        _conversations.any((c) => c.contact?.peerDeviceId.trim().toUpperCase() == detectedDeviceId);
+
     final filteredConvs = _searchQuery.isEmpty
         ? _conversations
         : _conversations.where((conv) {
             final name = conv.contact?.nickname.toLowerCase() ?? '';
             final snippet = conv.lastMessageSnippet?.toLowerCase() ?? '';
-            return name.contains(_searchQuery) || snippet.contains(_searchQuery);
+            final peerId = conv.contact?.peerDeviceId.toLowerCase() ?? '';
+            return name.contains(_searchQuery) ||
+                snippet.contains(_searchQuery) ||
+                peerId.contains(_searchQuery);
           }).toList();
 
     return Scaffold(
@@ -277,8 +347,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   },
                   style: const TextStyle(color: MineTheme.textLight, fontSize: 15),
                   decoration: InputDecoration(
-                    hintText: 'Search...',
-                    hintStyle: const TextStyle(color: Color(0xFF8696A0), fontSize: 15),
+                    hintText: 'Search chats or 12-digit Device ID...',
+                    hintStyle: const TextStyle(color: Color(0xFF8696A0), fontSize: 14),
                     prefixIcon: const Icon(Icons.search, color: Color(0xFF8696A0), size: 20),
                     prefixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                     suffixIconConstraints: const BoxConstraints(minWidth: 38, minHeight: 44),
@@ -301,6 +371,66 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 ),
               ),
             ),
+            // Quick "Add & Chat" Banner if a 12-digit Device ID is entered
+            if (detectedDeviceId != null && !isOwnDevice && !alreadyExists)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F2C34),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: MineTheme.accentGreen.withValues(alpha: 0.35)),
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                    leading: CircleAvatar(
+                      radius: 20,
+                      backgroundColor: MineTheme.accentGreen.withValues(alpha: 0.15),
+                      child: const Icon(Icons.person_add_rounded, color: MineTheme.accentGreen, size: 22),
+                    ),
+                    title: Text(
+                      'Chat with $detectedDeviceId',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: MineTheme.textLight),
+                    ),
+                    subtitle: const Text(
+                      '12-digit Device ID • Tap to add & message',
+                      style: TextStyle(fontSize: 12, color: Color(0xFF8696A0)),
+                    ),
+                    trailing: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: MineTheme.accentGreen,
+                        foregroundColor: const Color(0xFF00382B),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        minimumSize: Size.zero,
+                      ),
+                      onPressed: _isAddingDevice ? null : () => _addAndOpenDevice(detectedDeviceId),
+                      child: _isAddingDevice
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00382B)),
+                            )
+                          : const Text('Add & Chat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                    ),
+                    onTap: _isAddingDevice ? null : () => _addAndOpenDevice(detectedDeviceId),
+                  ),
+                ),
+              )
+            else if (isOwnDevice)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: MineTheme.accentGreen),
+                    SizedBox(width: 8),
+                    Text(
+                      'This is your own Device ID',
+                      style: TextStyle(color: MineTheme.textMuted, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
             // Conversation list or tabs
             Expanded(
               child: _isLoading
@@ -309,7 +439,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       ? (_searchQuery.isNotEmpty
                           ? Center(
                               child: Text(
-                                'No chats found for "$_searchQuery"',
+                                detectedDeviceId != null && !isOwnDevice && !alreadyExists
+                                    ? 'Tap "Add & Chat" above to message this device'
+                                    : 'No chats found for "$_searchQuery"',
                                 style: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
                               ),
                             )

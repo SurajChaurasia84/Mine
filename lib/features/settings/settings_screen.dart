@@ -136,7 +136,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // Network & Signaling Gateway
           const Text(
-            'ZERO-KNOWLEDGE SIGNALING',
+            'PUBLIC RELAY BROKER (ZERO HOSTING)',
             style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: MineTheme.textMuted, letterSpacing: 1.1),
           ),
           const SizedBox(height: 10),
@@ -147,12 +147,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Signaling Gateway URL',
+                    'Relay Broker Host',
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    'Used only for blind connection handshake. Server never receives plaintext or stores messages.',
+                    'Default: broker.hivemq.com (Zero setup, no hosting, works worldwide over mobile data/WiFi). The relay only forwards opaque AES-256-GCM ciphertext.',
                     style: TextStyle(fontSize: 12, color: MineTheme.textMuted),
                   ),
                   const SizedBox(height: 12),

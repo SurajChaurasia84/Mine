@@ -388,15 +388,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       : RefreshIndicator(
                           onRefresh: _loadConversations,
                           color: MineTheme.primaryTeal,
-                          child: ListView.separated(
+                          child: ListView.builder(
                             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                             itemCount: filteredConvs.length,
-                            separatorBuilder: (_, _) => const Divider(
-                              height: 1,
-                              indent: 76,
-                              endIndent: 16,
-                              color: Color(0xFF1F2C34),
-                            ),
                             itemBuilder: (context, index) {
                               final conv = filteredConvs[index];
                               final contact = conv.contact;

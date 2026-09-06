@@ -35,12 +35,15 @@ class ConnectionManager extends ChangeNotifier {
   StreamSubscription? _peerStatusSub;
   final bool enablePeriodicFlush;
   Timer? _outboxPollTimer;
+  final Map<String, Set<String>> _pendingReadReceipts = {};
 
   final _messageStreamController = StreamController<MessageModel>.broadcast();
   final _receiptStreamController = StreamController<String>.broadcast();
+  final _readReceiptStreamController = StreamController<String>.broadcast();
 
   Stream<MessageModel> get onMessageReceived => _messageStreamController.stream;
   Stream<String> get onDeliveryReceipt => _receiptStreamController.stream;
+  Stream<String> get onReadReceipt => _readReceiptStreamController.stream;
 
   ConnectionManager({
     required this.myIdentity,
@@ -62,6 +65,7 @@ class ConnectionManager extends ChangeNotifier {
       if (state == SignalingServerState.connected) {
         _checkAllPeersStatus();
         flushOutbox();
+        flushPendingReadReceipts();
         notifyListeners();
       } else {
         // Mark all peers offline/reconnecting if signaling gateway drops
@@ -171,16 +175,13 @@ class ConnectionManager extends ChangeNotifier {
         );
         signalingClient.sendEnvelope(envelope);
 
-        final isPeerOnline = getPeerState(contact.peerDeviceId) == PeerConnectionState.online;
-        if (isPeerOnline) {
-          // Update to sent
-          await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
-          final sentMessage = message.copyWith(status: MessageStatus.sent);
-          notifyListeners();
-          return sentMessage;
-        }
+        // Successfully dispatched from sender device to signaling network -> Sent (Single tick)
+        await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
+        final sentMessage = message.copyWith(status: MessageStatus.sent);
+        notifyListeners();
+        return sentMessage;
       } catch (_) {
-        // Remains pending in outbox
+        // Remains pending in outbox (Clock icon)
       }
     }
 
@@ -189,6 +190,7 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Delivers pending outbox messages for all online peers
   Future<void> flushOutbox() async {
+    flushPendingReadReceipts();
     if (signalingClient.state != SignalingServerState.connected) return;
 
     final pending = await chatRepository.getPendingOutgoingMessages();
@@ -274,6 +276,28 @@ class ConnectionManager extends ChangeNotifier {
         _receiptStreamController.add(msgId);
         notifyListeners();
       }
+      return;
+    }
+
+    if (envelope.type == 'read_receipt') {
+      final Set<String> msgIds = {};
+      if (envelope.messageId != null && envelope.messageId!.isNotEmpty) {
+        msgIds.add(envelope.messageId!.trim());
+      }
+      if (envelope.payload.isNotEmpty) {
+        final parts = envelope.payload.split(',');
+        for (final p in parts) {
+          final cleaned = p.replaceAll(RegExp(r'[^\w-]'), '').trim();
+          if (cleaned.isNotEmpty) msgIds.add(cleaned);
+        }
+      }
+
+      debugPrint('[ConnectionManager] Received read receipt for: $msgIds from ${envelope.from}');
+      for (final id in msgIds) {
+        await chatRepository.updateMessageStatus(id, MessageStatus.read);
+        _readReceiptStreamController.add(id);
+      }
+      notifyListeners();
       return;
     }
 
@@ -370,6 +394,65 @@ class ConnectionManager extends ChangeNotifier {
     }
   }
 
+  void flushPendingReadReceipts() {
+    if (signalingClient.state != SignalingServerState.connected) return;
+    if (_pendingReadReceipts.isEmpty) return;
+
+    final copy = Map<String, Set<String>>.from(_pendingReadReceipts);
+    _pendingReadReceipts.clear();
+
+    for (final entry in copy.entries) {
+      final peerId = entry.key;
+      final msgIds = entry.value.toList();
+      if (msgIds.isNotEmpty) {
+        try {
+          final receipt = SignalingEnvelope(
+            to: peerId,
+            from: myIdentity.deviceId,
+            type: 'read_receipt',
+            payload: msgIds.join(','),
+            messageId: msgIds.last,
+          );
+          signalingClient.sendEnvelope(receipt);
+          debugPrint('[ConnectionManager] Flushed pending read receipts (${msgIds.length}) to $peerId');
+        } catch (_) {
+          _pendingReadReceipts.putIfAbsent(peerId, () => <String>{}).addAll(msgIds);
+        }
+      }
+    }
+  }
+
+  /// Sends read receipt to peer and marks messages as read locally
+  Future<void> sendReadReceipt(ContactModel contact, List<String> messageIds) async {
+    if (messageIds.isEmpty) return;
+
+    for (final id in messageIds) {
+      await chatRepository.updateMessageStatus(id, MessageStatus.read);
+    }
+    notifyListeners();
+
+    final targetPeer = contact.peerDeviceId.trim().toUpperCase();
+
+    if (signalingClient.state == SignalingServerState.connected) {
+      try {
+        final receipt = SignalingEnvelope(
+          to: targetPeer,
+          from: myIdentity.deviceId,
+          type: 'read_receipt',
+          payload: messageIds.join(','),
+          messageId: messageIds.last,
+        );
+        signalingClient.sendEnvelope(receipt);
+        debugPrint('[ConnectionManager] Sent read receipt for ${messageIds.length} msgs to $targetPeer');
+      } catch (e) {
+        debugPrint('[ConnectionManager] Error sending read receipt: $e');
+        _pendingReadReceipts.putIfAbsent(targetPeer, () => <String>{}).addAll(messageIds);
+      }
+    } else {
+      _pendingReadReceipts.putIfAbsent(targetPeer, () => <String>{}).addAll(messageIds);
+    }
+  }
+
   @override
   void dispose() {
     _envelopeSub?.cancel();
@@ -378,6 +461,7 @@ class ConnectionManager extends ChangeNotifier {
     _outboxPollTimer?.cancel();
     _messageStreamController.close();
     _receiptStreamController.close();
+    _readReceiptStreamController.close();
     super.dispose();
   }
 }

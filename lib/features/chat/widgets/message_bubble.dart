@@ -26,6 +26,8 @@ class MessageBubble extends StatelessWidget {
     );
 
     final displayContent = message.decryptedContent ?? '[Encrypted Payload]';
+    final is24 = DateFormatter.is24HourFormat(context);
+    final timeSpacerWidth = isMe ? (is24 ? 58.0 : 70.0) : (is24 ? 42.0 : 50.0);
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -52,34 +54,29 @@ class MessageBubble extends StatelessWidget {
               ),
             ],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
+          child: Stack(
             children: [
-              Text(
-                displayContent,
-                style: const TextStyle(
-                  color: MineTheme.textLight,
-                  fontSize: 15,
-                  height: 1.3,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    DateFormatter.formatBubbleTime(message.timestamp),
-                    style: const TextStyle(
-                      color: MineTheme.textMuted,
-                      fontSize: 11,
+              _buildMessageTextWithSpacer(displayContent, timeSpacerWidth),
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      DateFormatter.formatBubbleTime(message.timestamp, context),
+                      style: const TextStyle(
+                        color: MineTheme.textMuted,
+                        fontSize: 11,
+                      ),
                     ),
-                  ),
-                  if (isMe) ...[
-                    const SizedBox(width: 4),
-                    _buildStatusIcon(message.status),
+                    if (isMe) ...[
+                      const SizedBox(width: 3),
+                      _buildStatusIcon(message.status),
+                    ],
                   ],
-                ],
+                ),
               ),
             ],
           ),
@@ -91,15 +88,15 @@ class MessageBubble extends StatelessWidget {
   Widget _buildStatusIcon(MessageStatus status) {
     switch (status) {
       case MessageStatus.pending:
-        return const Icon(Icons.access_time, size: 13, color: MineTheme.textMuted);
+        return const Icon(Icons.access_time, size: 12, color: MineTheme.textMuted);
       case MessageStatus.sent:
-        return const Icon(Icons.check, size: 14, color: MineTheme.textMuted);
+        return const Icon(Icons.check, size: 13, color: MineTheme.textMuted);
       case MessageStatus.delivered:
-        return const Icon(Icons.done_all, size: 15, color: MineTheme.textMuted);
+        return const Icon(Icons.done_all, size: 14, color: MineTheme.textMuted);
       case MessageStatus.read:
-        return const Icon(Icons.done_all, size: 15, color: MineTheme.tickBlue);
+        return const Icon(Icons.done_all, size: 14, color: MineTheme.tickBlue);
       case MessageStatus.failed:
-        return const Icon(Icons.error_outline, size: 13, color: Colors.redAccent);
+        return const Icon(Icons.error_outline, size: 12, color: Colors.redAccent);
     }
   }
 
@@ -125,6 +122,93 @@ class MessageBubble extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMessageTextWithSpacer(String content, double spacerWidth) {
+    final emojiRegex = RegExp(
+      r'(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])+'
+    );
+
+    final matches = emojiRegex.allMatches(content);
+    final spans = <InlineSpan>[];
+
+    // Determine if the message consists solely of emojis
+    final nonEmoji = content.trim().replaceAll(emojiRegex, '').replaceAll(RegExp(r'\s+'), '');
+    final isOnlyEmoji = nonEmoji.isEmpty && matches.isNotEmpty;
+    final emojiCount = content.trim().characters.length;
+
+    // Dynamic sizing: large for standalone emojis (WhatsApp-style), comfortable for inline
+    final double emojiFontSize;
+    if (isOnlyEmoji) {
+      if (emojiCount == 1) {
+        emojiFontSize = 36.0;
+      } else if (emojiCount <= 3) {
+        emojiFontSize = 28.0;
+      } else if (emojiCount <= 6) {
+        emojiFontSize = 24.0;
+      } else {
+        emojiFontSize = 20.0;
+      }
+    } else {
+      emojiFontSize = 19.0;
+    }
+
+    const textFontSize = 16.0;
+
+    if (matches.isEmpty) {
+      spans.add(TextSpan(
+        text: content,
+        style: const TextStyle(
+          color: MineTheme.textLight,
+          fontSize: textFontSize,
+          height: 1.3,
+        ),
+      ));
+    } else {
+      int lastIndex = 0;
+      for (final match in matches) {
+        if (match.start > lastIndex) {
+          spans.add(TextSpan(
+            text: content.substring(lastIndex, match.start),
+            style: const TextStyle(
+              color: MineTheme.textLight,
+              fontSize: textFontSize,
+              height: 1.3,
+            ),
+          ));
+        }
+        spans.add(TextSpan(
+          text: match.group(0),
+          style: TextStyle(
+            fontSize: emojiFontSize,
+            height: isOnlyEmoji ? 1.15 : 1.3,
+          ),
+        ));
+        lastIndex = match.end;
+      }
+      if (lastIndex < content.length) {
+        spans.add(TextSpan(
+          text: content.substring(lastIndex),
+          style: const TextStyle(
+            color: MineTheme.textLight,
+            fontSize: textFontSize,
+            height: 1.3,
+          ),
+        ));
+      }
+    }
+
+    // Append spacer for the inline timestamp & status tick
+    spans.add(
+      WidgetSpan(
+        alignment: PlaceholderAlignment.middle,
+        child: SizedBox(width: spacerWidth, height: isOnlyEmoji ? 16 : 13),
+      ),
+    );
+
+    return Text.rich(
+      TextSpan(children: spans),
     );
   }
 }

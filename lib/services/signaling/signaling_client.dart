@@ -112,14 +112,12 @@ class SignalingClient extends ChangeNotifier {
       final inboxTopic = 'mine/v1/inbox/$deviceId';
       client.subscribe(inboxTopic, MqttQos.atLeastOnce);
 
-      // 2. Publish online presence & directory card (retained)
+      // 2. Publish online presence (retained status only, no public keys)
       _publishPresence('online');
-      _publishDirectoryCard();
 
       // 3. Re-subscribe to any watched peer presence topics
       for (final peerId in _watchedPeers) {
         client.subscribe('mine/v1/presence/$peerId', MqttQos.atLeastOnce);
-        client.subscribe('mine/v1/directory/$peerId', MqttQos.atLeastOnce);
       }
 
       // 4. Listen for incoming broker publications
@@ -146,32 +144,9 @@ class SignalingClient extends ChangeNotifier {
         'deviceId': deviceId,
         'timestamp': DateTime.now().toIso8601String(),
       };
-      if (identityPublicKeyHex != null && dhPublicKeyHex != null) {
-        map['ik'] = identityPublicKeyHex;
-        map['dh'] = dhPublicKeyHex;
-      }
       builder.addString(jsonEncode(map));
       _client?.publishMessage(
         'mine/v1/presence/$deviceId',
-        MqttQos.atLeastOnce,
-        builder.payload!,
-        retain: true,
-      );
-    } catch (_) {}
-  }
-
-  void _publishDirectoryCard() {
-    if (_client == null || identityPublicKeyHex == null || dhPublicKeyHex == null) return;
-    try {
-      final builder = MqttClientPayloadBuilder();
-      builder.addString(jsonEncode({
-        'id': deviceId,
-        'ik': identityPublicKeyHex,
-        'dh': dhPublicKeyHex,
-        'timestamp': DateTime.now().toIso8601String(),
-      }));
-      _client?.publishMessage(
-        'mine/v1/directory/$deviceId',
         MqttQos.atLeastOnce,
         builder.payload!,
         retain: true,
@@ -263,15 +238,19 @@ class SignalingClient extends ChangeNotifier {
 
   Future<Map<String, String>?> resolvePeerKeys(
     String targetDeviceId, {
-    Duration timeout = const Duration(seconds: 4),
+    String? passcode,
+    Duration timeout = const Duration(seconds: 5),
   }) async {
     final normalized = targetDeviceId.trim().toUpperCase();
+
+    // Check if we already have verified keys in memory cache
     if (_directoryCache.containsKey(normalized)) {
       return _directoryCache[normalized];
     }
+
     queryDirectory(normalized);
 
-    // Also send key_request envelope as a direct probe
+    // Send key_request envelope containing the entered 6-digit passcode as payload
     try {
       sendEnvelope(SignalingEnvelope(
         to: normalized,
@@ -280,16 +259,47 @@ class SignalingClient extends ChangeNotifier {
         senderIdentityPublicKey: identityPublicKeyHex,
         senderDhPublicKey: dhPublicKeyHex,
         timestamp: DateTime.now(),
-        payload: 'key_request',
+        payload: passcode?.trim() ?? '',
       ));
     } catch (_) {}
 
+    // Wait for either key_response or key_rejected
     try {
-      final card = await onDirectoryResolved
-          .firstWhere((c) => c['deviceId']?.trim().toUpperCase() == normalized)
-          .timeout(timeout);
-      return card;
-    } catch (_) {
+      final envelopeFuture = onEnvelopeReceived.firstWhere((env) {
+        final from = env.from.trim().toUpperCase();
+        return from == normalized && (env.type == 'key_response' || env.type == 'key_rejected');
+      });
+
+      final directoryFuture = onDirectoryResolved
+          .firstWhere((c) => c['deviceId']?.trim().toUpperCase() == normalized);
+
+      final result = await Future.any([
+        envelopeFuture.then((env) {
+          if (env.type == 'key_rejected') {
+            throw const FormatException('INCORRECT_PASSCODE');
+          }
+          if (env.senderIdentityPublicKey != null && env.senderDhPublicKey != null) {
+            recordPeerKeys(
+              peerDeviceId: normalized,
+              ik: env.senderIdentityPublicKey!,
+              dh: env.senderDhPublicKey!,
+            );
+            return {
+              'deviceId': normalized,
+              'ik': env.senderIdentityPublicKey!,
+              'dh': env.senderDhPublicKey!,
+            };
+          }
+          return null;
+        }),
+        directoryFuture,
+      ]).timeout(timeout);
+
+      return result;
+    } catch (e) {
+      if (e is FormatException && e.message == 'INCORRECT_PASSCODE') {
+        rethrow;
+      }
       return _directoryCache[normalized];
     }
   }

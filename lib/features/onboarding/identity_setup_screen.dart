@@ -33,19 +33,24 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
   }
 
   Future<void> _initIdentity() async {
-    // Check if identity already exists or generate new cryptographic bundle
-    var identity = await widget.secureKeyStore.getIdentity();
-    if (identity == null) {
-      // Simulate pleasant setup progress
-      await Future.delayed(const Duration(milliseconds: 600));
-      identity = await widget.cryptoService.generateIdentity();
-      await widget.secureKeyStore.saveIdentity(identity);
-    }
-    if (mounted) {
-      setState(() {
-        _identity = identity;
-        _isGenerating = false;
-      });
+    KeyPairBundle? identity;
+    try {
+      identity = await widget.secureKeyStore.getIdentity();
+      if (identity == null) {
+        await Future.delayed(const Duration(milliseconds: 300));
+        identity = await widget.cryptoService.generateIdentity();
+        await widget.secureKeyStore.saveIdentity(identity);
+      }
+    } catch (e) {
+      debugPrint('[IdentitySetup] Error creating identity: $e');
+      identity ??= await widget.cryptoService.generateIdentity();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _identity = identity;
+          _isGenerating = false;
+        });
+      }
     }
   }
 

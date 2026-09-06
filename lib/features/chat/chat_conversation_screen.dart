@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../app/theme.dart';
-import '../../core/utils/id_generator.dart';
 import '../../data/models/contact_model.dart';
 import '../../data/models/conversation_model.dart';
 import '../../data/models/message_model.dart';
@@ -183,57 +182,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     });
   }
 
-  void _showFingerprint() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: MineTheme.surfaceDark,
-        title: const Text('Cryptographic Security Details'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Peer Device ID:',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: MineTheme.textMuted),
-            ),
-            const SizedBox(height: 4),
-            SelectableText(
-              _currentContact.peerDeviceId,
-              style: const TextStyle(fontSize: 14, color: MineTheme.accentGreen, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              'Public Identity Key (Ed25519):',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: MineTheme.textMuted),
-            ),
-            const SizedBox(height: 4),
-            SelectableText(
-              _currentContact.peerIdentityPublicKey,
-              style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: MineTheme.textLight),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              'Diffie-Hellman Key (X25519):',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: MineTheme.textMuted),
-            ),
-            const SizedBox(height: 4),
-            SelectableText(
-              _currentContact.peerDhPublicKey,
-              style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: MineTheme.textLight),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close', style: TextStyle(color: MineTheme.primaryTeal)),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final connManager = context.watch<ConnectionManager>();
@@ -263,23 +211,14 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      _buildStatusDot(peerState),
-                      const SizedBox(width: 5),
-                      Text(
-                        peerState.label,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: _getStatusColor(peerState),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '• ${IdGenerator.formatFingerprint(_currentContact.peerDeviceId)}',
-                        style: const TextStyle(fontSize: 11, color: MineTheme.textMuted),
-                      ),
-                    ],
+                  Text(
+                    peerState == PeerConnectionState.online ? 'online' : 'offline',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: peerState == PeerConnectionState.online
+                          ? MineTheme.accentGreen
+                          : MineTheme.textMuted,
+                    ),
                   ),
                 ],
               ),
@@ -303,8 +242,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                     },
                   ),
                 );
-              } else if (value == 'security') {
-                _showFingerprint();
               } else if (value == 'clear_chat') {
                 await _clearChat();
               } else if (value == 'delete_contact') {
@@ -321,16 +258,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                     Icon(Icons.edit_outlined, size: 18, color: MineTheme.textLight),
                     SizedBox(width: 10),
                     Text('Edit Local Nickname'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'security',
-                child: Row(
-                  children: [
-                    Icon(Icons.lock_outline, size: 18, color: MineTheme.textLight),
-                    SizedBox(width: 10),
-                    Text('Security Fingerprint'),
                   ],
                 ),
               ),
@@ -364,31 +291,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         ),
         child: Column(
           children: [
-            // End-to-End Encryption Banner
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: MineTheme.surfaceDark.withAlpha(160),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.lock_rounded, size: 13, color: Color(0xFFFFD279)),
-                  SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      'Messages are end-to-end encrypted. No one outside of this chat can read them.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 11, color: Color(0xFFFFD279)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Messages list
+            // Messages list with scrollable encryption note at the top
             Expanded(
               child: GestureDetector(
                 behavior: HitTestBehavior.translucent,
@@ -399,19 +302,30 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                 child: _isLoading
                     ? const Center(child: CircularProgressIndicator(color: MineTheme.primaryTeal))
                     : _messages.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'No messages yet.\nSay hello!',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
-                            ),
+                        ? ListView(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            children: [
+                              _buildEncryptionNote(),
+                              const SizedBox(height: 40),
+                              const Center(
+                                child: Text(
+                                  'No messages yet.\nSay hello!',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
+                                ),
+                              ),
+                            ],
                           )
                         : ListView.builder(
                             controller: _scrollController,
-                            itemCount: _messages.length,
+                            itemCount: _messages.length + 1,
                             padding: const EdgeInsets.symmetric(vertical: 8),
                             itemBuilder: (context, index) {
-                              final msg = _messages[index];
+                              if (index == 0) {
+                                return _buildEncryptionNote();
+                              }
+                              final msg = _messages[index - 1];
                               final isMe = msg.senderId != _currentContact.peerDeviceId;
                               return MessageBubble(
                                 message: msg,
@@ -442,26 +356,30 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     );
   }
 
-  Widget _buildStatusDot(PeerConnectionState state) {
-    return Container(
-      width: 7,
-      height: 7,
-      decoration: BoxDecoration(
-        color: _getStatusColor(state),
-        shape: BoxShape.circle,
+  Widget _buildEncryptionNote() {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: MineTheme.surfaceDark.withAlpha(160),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.lock_rounded, size: 13, color: Color(0xFFFFD279)),
+            SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Messages are end-to-end encrypted. No one outside of this chat can read them.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Color(0xFFFFD279)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
-  }
-
-  Color _getStatusColor(PeerConnectionState state) {
-    switch (state) {
-      case PeerConnectionState.online:
-        return MineTheme.accentGreen;
-      case PeerConnectionState.connecting:
-      case PeerConnectionState.reconnecting:
-        return Colors.amber;
-      case PeerConnectionState.offline:
-        return MineTheme.textMuted;
-    }
   }
 }

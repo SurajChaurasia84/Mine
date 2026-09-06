@@ -32,6 +32,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   late ContactModel _currentContact;
   final List<MessageModel> _messages = [];
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey<ChatInputBarState> _inputKey = GlobalKey<ChatInputBarState>();
   bool _isLoading = true;
   StreamSubscription? _messageSub;
   StreamSubscription? _receiptSub;
@@ -389,34 +390,42 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
             // Messages list
             Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator(color: MineTheme.primaryTeal))
-                  : _messages.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No messages yet.\nSay hello!',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () {
+                  FocusScope.of(context).unfocus();
+                  _inputKey.currentState?.hideEmoji();
+                },
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator(color: MineTheme.primaryTeal))
+                    : _messages.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'No messages yet.\nSay hello!',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
+                            ),
+                          )
+                        : ListView.builder(
+                            controller: _scrollController,
+                            itemCount: _messages.length,
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            itemBuilder: (context, index) {
+                              final msg = _messages[index];
+                              final isMe = msg.senderId != _currentContact.peerDeviceId;
+                              return MessageBubble(
+                                message: msg,
+                                isMe: isMe,
+                                onDelete: () => _deleteMessage(msg),
+                              );
+                            },
                           ),
-                        )
-                      : ListView.builder(
-                          controller: _scrollController,
-                          itemCount: _messages.length,
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          itemBuilder: (context, index) {
-                            final msg = _messages[index];
-                            final isMe = msg.senderId != _currentContact.peerDeviceId;
-                            return MessageBubble(
-                              message: msg,
-                              isMe: isMe,
-                              onDelete: () => _deleteMessage(msg),
-                            );
-                          },
-                        ),
+              ),
             ),
 
             // Bottom input bar
             ChatInputBar(
+              key: _inputKey,
               onSend: _handleSendMessage,
               onAttach: () {
                 ScaffoldMessenger.of(context).showSnackBar(

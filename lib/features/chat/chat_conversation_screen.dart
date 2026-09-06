@@ -10,6 +10,7 @@ import '../../data/repositories/contact_repository.dart';
 import '../../services/connection_manager/connection_manager.dart';
 import '../../services/connection_manager/peer_connection_state.dart';
 import '../contacts/nickname_edit_dialog.dart';
+import 'widgets/chat_doodle_painter.dart';
 import 'widgets/chat_input_bar.dart';
 import 'widgets/message_bubble.dart';
 
@@ -30,7 +31,7 @@ class ChatConversationScreen extends StatefulWidget {
 class _ChatConversationScreenState extends State<ChatConversationScreen> {
   late ContactModel _currentContact;
   final List<MessageModel> _messages = [];
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = ScrollController(initialScrollOffset: 1000000.0);
   final GlobalKey<ChatInputBarState> _inputKey = GlobalKey<ChatInputBarState>();
   bool _isLoading = true;
   StreamSubscription? _messageSub;
@@ -57,7 +58,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
             setState(() {
               _messages.add(msg);
             });
-            _scrollToBottom();
+            _scrollToBottom(animate: true);
             // Since user is actively viewing this screen, mark incoming message as read
             connManager.sendReadReceipt(_currentContact, [msg.id]);
           }
@@ -125,7 +126,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         _messages.addAll(msgs);
         _isLoading = false;
       });
-      _scrollToBottom();
+      _scrollToBottom(animate: false);
     }
 
     // Send read receipt for all incoming messages in this chat
@@ -139,14 +140,19 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     }
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool animate = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-        );
+        final target = _scrollController.position.maxScrollExtent;
+        if (animate) {
+          _scrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        } else {
+          _scrollController.jumpTo(target);
+        }
       }
     });
   }
@@ -163,7 +169,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     setState(() {
       _messages.add(sentMsg);
     });
-    _scrollToBottom();
+    _scrollToBottom(animate: true);
   }
 
   Future<void> _deleteMessage(MessageModel msg) async {
@@ -285,73 +291,85 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ),
         ],
       ),
-      body: Container(
-        decoration: const BoxDecoration(
-          color: MineTheme.backgroundDark,
-        ),
-        child: Column(
-          children: [
-            // Messages list with scrollable encryption note at the top
-            Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onTap: () {
-                  FocusScope.of(context).unfocus();
-                  _inputKey.currentState?.hideEmoji();
-                },
-                child: _isLoading
-                    ? const Center(child: CircularProgressIndicator(color: MineTheme.primaryTeal))
-                    : _messages.isEmpty
-                        ? ListView(
-                            controller: _scrollController,
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            children: [
-                              _buildEncryptionNote(),
-                              const SizedBox(height: 40),
-                              const Center(
-                                child: Text(
-                                  'No messages yet.\nSay hello!',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Dark Background
+          Container(
+            color: MineTheme.backgroundDark,
+          ),
+          // WhatsApp Doodle Texture Wallpaper
+          const RepaintBoundary(
+            child: CustomPaint(
+              painter: ChatDoodlePainter(),
+              size: Size.infinite,
+            ),
+          ),
+          // Chat Content
+          Column(
+            children: [
+              // Messages list with scrollable encryption note at the top
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: () {
+                    FocusScope.of(context).unfocus();
+                    _inputKey.currentState?.hideEmoji();
+                  },
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator(color: MineTheme.primaryTeal))
+                      : _messages.isEmpty
+                          ? ListView(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              children: [
+                                _buildEncryptionNote(),
+                                const SizedBox(height: 40),
+                                const Center(
+                                  child: Text(
+                                    'No messages yet.\nSay hello!',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
+                                  ),
                                 ),
-                              ),
-                            ],
-                          )
-                        : ListView.builder(
-                            controller: _scrollController,
-                            itemCount: _messages.length + 1,
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            itemBuilder: (context, index) {
-                              if (index == 0) {
-                                return _buildEncryptionNote();
-                              }
-                              final msg = _messages[index - 1];
-                              final isMe = msg.senderId != _currentContact.peerDeviceId;
-                              return MessageBubble(
-                                message: msg,
-                                isMe: isMe,
-                                onDelete: () => _deleteMessage(msg),
-                              );
-                            },
-                          ),
+                              ],
+                            )
+                          : ListView.builder(
+                              controller: _scrollController,
+                              itemCount: _messages.length + 1,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              itemBuilder: (context, index) {
+                                if (index == 0) {
+                                  return _buildEncryptionNote();
+                                }
+                                final msg = _messages[index - 1];
+                                final isMe = msg.senderId != _currentContact.peerDeviceId;
+                                return MessageBubble(
+                                  message: msg,
+                                  isMe: isMe,
+                                  onDelete: () => _deleteMessage(msg),
+                                );
+                              },
+                            ),
+                ),
               ),
-            ),
 
-            // Bottom input bar
-            ChatInputBar(
-              key: _inputKey,
-              onSend: _handleSendMessage,
-              onAttach: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Media will be encrypted before transmission.'),
-                    backgroundColor: MineTheme.surfaceDark,
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
+              // Bottom input bar
+              ChatInputBar(
+                key: _inputKey,
+                onSend: _handleSendMessage,
+                onAttach: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Media will be encrypted before transmission.'),
+                      backgroundColor: MineTheme.surfaceDark,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

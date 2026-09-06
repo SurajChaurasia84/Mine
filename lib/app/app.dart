@@ -71,7 +71,11 @@ class _MineAppState extends State<MineApp> {
       _signalingClient?.dispose();
       _connectionManager?.dispose();
 
-      _signalingClient = SignalingClient(deviceId: identity.deviceId);
+      _signalingClient = SignalingClient(
+        deviceId: identity.deviceId,
+        identityPublicKeyHex: identity.identityPublicKeyHex,
+        dhPublicKeyHex: identity.dhPublicKeyHex,
+      );
       _connectionManager = ConnectionManager(
         myIdentity: identity,
         cryptoService: widget.cryptoService,

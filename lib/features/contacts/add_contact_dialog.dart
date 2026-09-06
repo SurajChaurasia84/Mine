@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../app/theme.dart';
 import '../../core/crypto/key_pair_bundle.dart';
 import '../../data/models/contact_model.dart';
 import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/contact_repository.dart';
+import '../../services/connection_manager/connection_manager.dart';
 
 class AddContactDialog extends StatefulWidget {
   final ContactRepository contactRepository;
@@ -28,6 +30,7 @@ class _AddContactDialogState extends State<AddContactDialog> {
   int _step = 1; // 1: Enter code, 2: Set Nickname
   Map<String, String>? _parsedPayload;
   String? _errorMessage;
+  bool _isResolving = false;
 
   @override
   void dispose() {
@@ -36,24 +39,67 @@ class _AddContactDialogState extends State<AddContactDialog> {
     super.dispose();
   }
 
-  void _validateAndProceed() {
+  Future<void> _validateAndProceed() async {
     final text = _codeController.text.trim();
     if (text.isEmpty) {
-      setState(() => _errorMessage = 'Please enter or paste an invite code');
+      setState(() => _errorMessage = 'Please enter Device ID or invite code');
       return;
     }
 
+    // 1. Check if invite link or base64 QR payload
     final parsed = KeyPairBundle.parseInvitePayload(text);
-    if (parsed == null) {
-      setState(() => _errorMessage = 'Invalid invite code or QR format');
+    if (parsed != null) {
+      setState(() {
+        _parsedPayload = parsed;
+        _errorMessage = null;
+        _step = 2; // Move to Set Nickname
+      });
       return;
     }
 
-    setState(() {
-      _parsedPayload = parsed;
-      _errorMessage = null;
-      _step = 2; // Move to Set Nickname
-    });
+    // 2. Check if it's a 12-digit Device ID (e.g. UU72-7FYQ-K6N5)
+    final normalized = ConnectionManager.normalizeDeviceId(text);
+    if (normalized != null) {
+      setState(() {
+        _isResolving = true;
+        _errorMessage = null;
+      });
+
+      try {
+        final connManager = context.read<ConnectionManager>();
+        final keys = await connManager.signalingClient.resolvePeerKeys(normalized);
+        if (!mounted) return;
+
+        if (keys != null && keys['ik'] != null && keys['dh'] != null) {
+          setState(() {
+            _parsedPayload = {
+              'deviceId': normalized,
+              'identityPublicKey': keys['ik']!,
+              'dhPublicKey': keys['dh']!,
+            };
+            _errorMessage = null;
+            _isResolving = false;
+            _step = 2;
+          });
+          return;
+        } else {
+          setState(() {
+            _isResolving = false;
+            _errorMessage = 'Could not reach device "$normalized" right now. Ensure it has opened Mine with internet connected.';
+          });
+          return;
+        }
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _isResolving = false;
+          _errorMessage = 'Error resolving Device ID: $e';
+        });
+        return;
+      }
+    }
+
+    setState(() => _errorMessage = 'Invalid 12-digit Device ID or invite code');
   }
 
   Future<void> _saveContact() async {
@@ -118,16 +164,16 @@ class _AddContactDialogState extends State<AddContactDialog> {
         ),
         const SizedBox(height: 12),
         const Text(
-          'Enter or paste the peer\'s shareable invite code below:',
+          'Enter a 12-digit Device ID (e.g. UU72-7FYQ-K6N5) or paste an invite code:',
           style: TextStyle(fontSize: 13, color: MineTheme.textMuted),
         ),
         const SizedBox(height: 16),
         TextField(
           controller: _codeController,
-          maxLines: 3,
+          maxLines: 2,
           style: const TextStyle(fontSize: 13),
           decoration: InputDecoration(
-            hintText: 'mine://invite?p=... or paste code',
+            hintText: 'e.g. UU72-7FYQ-K6N5 or invite link',
             hintStyle: const TextStyle(color: MineTheme.textMuted, fontSize: 13),
             filled: true,
             fillColor: MineTheme.backgroundDark,
@@ -146,14 +192,20 @@ class _AddContactDialogState extends State<AddContactDialog> {
         ],
         const SizedBox(height: 20),
         FilledButton(
-          onPressed: _validateAndProceed,
+          onPressed: _isResolving ? null : _validateAndProceed,
           style: FilledButton.styleFrom(
             backgroundColor: MineTheme.primaryTeal,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 13),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
-          child: const Text('Continue'),
+          child: _isResolving
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Continue'),
         ),
       ],
     );

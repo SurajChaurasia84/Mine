@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../app/theme.dart';
@@ -25,35 +26,69 @@ class ChatListScreen extends StatefulWidget {
 class _ChatListScreenState extends State<ChatListScreen> {
   List<ConversationModel> _conversations = [];
   bool _isLoading = true;
+  StreamSubscription? _messageSub;
+  StreamSubscription? _receiptSub;
+  ConnectionManager? _connManager;
+  VoidCallback? _connListener;
 
   @override
   void initState() {
     super.initState();
     _loadConversations();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _connManager = context.read<ConnectionManager>();
+      _messageSub = _connManager?.onMessageReceived.listen((_) {
+        _loadConversations();
+      });
+      _receiptSub = _connManager?.onDeliveryReceipt.listen((_) {
+        _loadConversations();
+      });
+      _connListener = () {
+        if (mounted) _loadConversations();
+      };
+      _connManager?.addListener(_connListener!);
+    });
+  }
+
+  @override
+  void dispose() {
+    _messageSub?.cancel();
+    _receiptSub?.cancel();
+    if (_connListener != null) {
+      _connManager?.removeListener(_connListener!);
+    }
+    super.dispose();
   }
 
   Future<void> _loadConversations() async {
     final chatRepo = context.read<ChatRepository>();
     final connManager = context.read<ConnectionManager>();
 
-    final convs = await chatRepo.getConversations();
+    List<ConversationModel> convs = [];
+    try {
+      convs = await chatRepo.getConversations();
 
-    // Decrypt last message preview for each conversation
-    for (final conv in convs) {
-      if (conv.contact != null) {
-        final lastMsg = await chatRepo.getLastMessage(conv.id);
-        if (lastMsg != null) {
-          final decrypted = await connManager.decryptMessageContent(lastMsg, conv.contact!);
-          conv.lastMessageSnippet = decrypted;
+      // Decrypt last message preview for each conversation
+      for (final conv in convs) {
+        if (conv.contact != null) {
+          final lastMsg = await chatRepo.getLastMessage(conv.id);
+          if (lastMsg != null) {
+            final decrypted = await connManager.decryptMessageContent(lastMsg, conv.contact!);
+            conv.lastMessageSnippet = decrypted;
+          }
         }
       }
-    }
-
-    if (mounted) {
-      setState(() {
-        _conversations = convs;
-        _isLoading = false;
-      });
+    } catch (e) {
+      debugPrint('[ChatList] Error loading conversations: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _conversations = convs;
+          _isLoading = false;
+        });
+      }
     }
   }
 

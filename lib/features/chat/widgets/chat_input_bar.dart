@@ -204,12 +204,12 @@ class ChatInputBarState extends State<ChatInputBar> {
                       shape: BoxShape.circle,
                     ),
                     child: IconButton(
-                      icon: Icon(
-                        _hasText ? Icons.send : Icons.mic,
-                        color: const Color(0xFF00382B),
-                        size: 21,
+                      icon: const Icon(
+                        Icons.send_rounded,
+                        color: Color(0xFF00382B),
+                        size: 20,
                       ),
-                      onPressed: _hasText ? _handleSend : null,
+                      onPressed: _handleSend,
                     ),
                   ),
                 ],

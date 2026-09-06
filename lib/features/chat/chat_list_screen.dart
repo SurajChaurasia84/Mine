@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../app/theme.dart';
 import '../../core/crypto/key_pair_bundle.dart';
+import '../../core/utils/avatar_colors.dart';
 import '../../core/utils/date_formatter.dart';
 import '../../data/models/conversation_model.dart';
 import '../../data/models/message_model.dart';
@@ -32,6 +33,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
   StreamSubscription? _readReceiptSub;
   ConnectionManager? _connManager;
   VoidCallback? _connListener;
+
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -65,6 +69,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
     if (_connListener != null) {
       _connManager?.removeListener(_connListener!);
     }
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -106,12 +111,24 @@ class _ChatListScreenState extends State<ChatListScreen> {
     setState(() {
       conv.unreadCount = 0; // Immediate UI update to hide badge
     });
+
+    // Fast pre-fetch messages so conversation screen opens with all messages already loaded
+    final chatRepo = context.read<ChatRepository>();
+    final connManager = context.read<ConnectionManager>();
+    final msgs = await chatRepo.getMessages(conv.id);
+    for (final m in msgs) {
+      await connManager.decryptMessageContent(m, conv.contact!);
+    }
+
+    if (!mounted) return;
+
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => ChatConversationScreen(
           contact: conv.contact!,
           conversation: conv,
+          initialMessages: msgs,
         ),
       ),
     );
@@ -141,6 +158,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
     context.watch<ConnectionManager>();
     final signalingClient = context.watch<SignalingClient>();
     final isSignalingConnected = signalingClient.state == SignalingServerState.connected;
+
+    final filteredConvs = _searchQuery.isEmpty
+        ? _conversations
+        : _conversations.where((conv) {
+            final name = conv.contact?.nickname.toLowerCase() ?? '';
+            final snippet = conv.lastMessageSnippet?.toLowerCase() ?? '';
+            return name.contains(_searchQuery) || snippet.contains(_searchQuery);
+          }).toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -218,109 +243,189 @@ class _ChatListScreenState extends State<ChatListScreen> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: MineTheme.primaryTeal))
-          : _conversations.isEmpty
-              ? _buildEmptyState()
-              : RefreshIndicator(
-                  onRefresh: _loadConversations,
-                  color: MineTheme.primaryTeal,
-                  child: ListView.separated(
-                    itemCount: _conversations.length,
-                    separatorBuilder: (_, _) => const Divider(
-                      height: 1,
-                      indent: 72,
-                      endIndent: 16,
-                    ),
-                    itemBuilder: (context, index) {
-                      final conv = _conversations[index];
-                      final contact = conv.contact;
-                      if (contact == null) return const SizedBox.shrink();
-
-                      return ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                        leading: CircleAvatar(
-                          radius: 25,
-                          backgroundColor: MineTheme.primaryDark,
-                          child: Text(
-                            contact.nickname.isNotEmpty
-                                ? contact.nickname[0].toUpperCase()
-                                : '?',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        title: Text(
-                          contact.nickname,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
-                          ),
-                        ),
-                        subtitle: Row(
-                          children: [
-                            if (conv.lastMessageIsMe && conv.lastMessageStatus != null) ...[
-                              _buildStatusIcon(conv.lastMessageStatus!),
-                              const SizedBox(width: 4),
-                            ],
-                            Expanded(
-                              child: _buildSnippet(
-                                conv.lastMessageSnippet != null && conv.lastMessageSnippet!.isNotEmpty
-                                    ? conv.lastMessageSnippet!
-                                    : 'No messages yet',
-                                conv.unreadCount > 0 ? MineTheme.textLight : MineTheme.textMuted,
-                                13,
-                                conv.unreadCount > 0 ? FontWeight.w500 : FontWeight.normal,
-                              ),
-                            ),
-                          ],
-                        ),
-                        trailing: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              DateFormatter.formatChatListTime(conv.lastMessageAt ?? conv.createdAt, context),
-                              style: TextStyle(
-                                color: conv.unreadCount > 0 ? MineTheme.accentGreen : MineTheme.textMuted,
-                                fontSize: 11,
-                                fontWeight: conv.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
-                              ),
-                            ),
-                            if (conv.unreadCount > 0) ...[
-                              const SizedBox(height: 5),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: MineTheme.accentGreen,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text(
-                                  conv.unreadCount > 99 ? '99+' : '${conv.unreadCount}',
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Colors.black,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        onTap: () => _openChat(conv),
-                      );
-                    },
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Column(
+          children: [
+            // WhatsApp-style Search Bar Pill
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Container(
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1F2C34),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                alignment: Alignment.center,
+                child: TextField(
+                  controller: _searchController,
+                  textAlignVertical: TextAlignVertical.center,
+                  textInputAction: TextInputAction.search,
+                  cursorColor: MineTheme.accentGreen,
+                  onChanged: (val) {
+                    setState(() {
+                      _searchQuery = val.trim().toLowerCase();
+                    });
+                  },
+                  style: const TextStyle(color: MineTheme.textLight, fontSize: 15),
+                  decoration: InputDecoration(
+                    hintText: 'Search...',
+                    hintStyle: const TextStyle(color: Color(0xFF8696A0), fontSize: 15),
+                    prefixIcon: const Icon(Icons.search, color: Color(0xFF8696A0), size: 20),
+                    prefixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                    suffixIconConstraints: const BoxConstraints(minWidth: 38, minHeight: 44),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.close, color: Color(0xFF8696A0), size: 18),
+                            padding: EdgeInsets.zero,
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                          )
+                        : null,
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
                   ),
                 ),
+              ),
+            ),
+            // Conversation list or tabs
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator(color: MineTheme.primaryTeal))
+                  : filteredConvs.isEmpty
+                      ? (_searchQuery.isNotEmpty
+                          ? Center(
+                              child: Text(
+                                'No chats found for "$_searchQuery"',
+                                style: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
+                              ),
+                            )
+                          : _buildEmptyState())
+                      : RefreshIndicator(
+                          onRefresh: _loadConversations,
+                          color: MineTheme.primaryTeal,
+                          child: ListView.separated(
+                            itemCount: filteredConvs.length,
+                            separatorBuilder: (_, _) => const Divider(
+                              height: 1,
+                              indent: 76,
+                              endIndent: 16,
+                              color: Color(0xFF1F2C34),
+                            ),
+                            itemBuilder: (context, index) {
+                              final conv = filteredConvs[index];
+                              final contact = conv.contact;
+                              if (contact == null) return const SizedBox.shrink();
+
+                              final avatarColors = AvatarColors.forName(
+                                contact.nickname.isNotEmpty ? contact.nickname : contact.id,
+                              );
+
+                              return ListTile(
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                leading: CircleAvatar(
+                                  radius: 25,
+                                  backgroundColor: avatarColors.background,
+                                  child: Text(
+                                    contact.nickname.isNotEmpty
+                                        ? contact.nickname[0].toUpperCase()
+                                        : '?',
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                      color: avatarColors.foreground,
+                                    ),
+                                  ),
+                                ),
+                                title: Text(
+                                  contact.nickname,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 16.5,
+                                    color: MineTheme.textLight,
+                                  ),
+                                ),
+                                subtitle: Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Row(
+                                    children: [
+                                      if (conv.lastMessageIsMe && conv.lastMessageStatus != null) ...[
+                                        _buildStatusIcon(conv.lastMessageStatus!),
+                                        const SizedBox(width: 4),
+                                      ],
+                                      Expanded(
+                                        child: _buildSnippet(
+                                          conv.lastMessageSnippet != null && conv.lastMessageSnippet!.isNotEmpty
+                                              ? conv.lastMessageSnippet!
+                                              : 'No messages yet',
+                                          conv.unreadCount > 0 ? MineTheme.textLight : MineTheme.textMuted,
+                                          13.5,
+                                          conv.unreadCount > 0 ? FontWeight.w600 : FontWeight.normal,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                trailing: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      DateFormatter.formatChatListTime(conv.lastMessageAt ?? conv.createdAt, context),
+                                      style: TextStyle(
+                                        color: conv.unreadCount > 0 ? MineTheme.accentGreen : MineTheme.textMuted,
+                                        fontSize: 11,
+                                        fontWeight: conv.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
+                                      ),
+                                    ),
+                                    if (conv.unreadCount > 0) ...[
+                                      const SizedBox(height: 5),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        constraints: const BoxConstraints(minWidth: 20),
+                                        decoration: BoxDecoration(
+                                          color: MineTheme.accentGreen,
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          conv.unreadCount > 99 ? '99+' : '${conv.unreadCount}',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            color: Color(0xFF00382B),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                onTap: () => _openChat(conv),
+                              );
+                            },
+                          ),
+                        ),
+            ),
+          ],
+        ),
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddContactDialog,
         tooltip: 'Add Contact',
-        child: const Icon(Icons.chat_bubble_outline),
+        backgroundColor: MineTheme.accentGreen,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Icon(
+          Icons.add_comment_rounded,
+          color: Color(0xFF00382B),
+          size: 24,
+        ),
       ),
     );
   }

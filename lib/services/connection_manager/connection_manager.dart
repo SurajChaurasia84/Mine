@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../core/crypto/crypto_service.dart';
 import '../../core/crypto/key_pair_bundle.dart';
+import '../../core/storage/secure_key_store.dart';
 import '../../data/models/contact_model.dart';
 import '../../data/models/conversation_model.dart';
 import '../../data/models/message_model.dart';
@@ -23,6 +24,7 @@ class ConnectionManager extends ChangeNotifier {
   final ContactRepository contactRepository;
   final ChatRepository chatRepository;
   final SignalingClient signalingClient;
+  final SecureKeyStore? secureKeyStore;
 
   // Track real-time connectivity status per peer device ID
   final Map<String, PeerConnectionState> _peerStates = {};
@@ -52,6 +54,7 @@ class ConnectionManager extends ChangeNotifier {
     required this.contactRepository,
     required this.chatRepository,
     required this.signalingClient,
+    this.secureKeyStore,
     this.enablePeriodicFlush = true,
   }) {
     _init();
@@ -379,6 +382,26 @@ class ConnectionManager extends ChangeNotifier {
 
     if (envelope.type == 'key_request') {
       try {
+        final localPasscode = await secureKeyStore?.getOrGeneratePasscode();
+        final incomingPasscode = envelope.payload.trim();
+
+        // If localPasscode is configured, verify incomingPasscode
+        if (localPasscode != null && localPasscode.isNotEmpty) {
+          if (incomingPasscode != localPasscode) {
+            debugPrint('[ConnectionManager] Rejected key_request from $senderDeviceId: incorrect passcode');
+            final rejectEnvelope = SignalingEnvelope(
+              to: senderDeviceId,
+              from: myIdentity.deviceId,
+              type: 'key_rejected',
+              timestamp: DateTime.now(),
+              payload: 'INCORRECT_PASSCODE',
+            );
+            signalingClient.sendEnvelope(rejectEnvelope);
+            return;
+          }
+        }
+
+        // Passcode valid -> send public keys
         final replyEnvelope = SignalingEnvelope(
           to: senderDeviceId,
           from: myIdentity.deviceId,
@@ -440,19 +463,9 @@ class ConnectionManager extends ChangeNotifier {
       // Find or verify contact
       var contact = await contactRepository.findByPeerDeviceId(senderDeviceId);
       if (contact == null) {
-        // Auto-register peer contact if public keys are provided in envelope
-        if (envelope.senderDhPublicKey != null && envelope.senderIdentityPublicKey != null) {
-          final prefix = senderDeviceId.length >= 4 ? senderDeviceId.substring(0, 4) : senderDeviceId;
-          contact = await contactRepository.addContact(
-            peerDeviceId: senderDeviceId,
-            peerIdentityPublicKey: envelope.senderIdentityPublicKey!,
-            peerDhPublicKey: envelope.senderDhPublicKey!,
-            nickname: 'Contact $prefix',
-          );
-        } else {
-          // Unknown sender without public keys - cannot decrypt
-          return;
-        }
+        // Drop message from unknown sender who hasn't been added with authorized Passcode
+        debugPrint('[ConnectionManager] Dropping message from unknown/unauthorized sender $senderDeviceId');
+        return;
       }
 
       final conversation = await chatRepository.getOrCreateConversation(contact.id);
@@ -597,8 +610,12 @@ class ConnectionManager extends ChangeNotifier {
     return null;
   }
 
-  /// Resolves peer public keys via retained directory or signaling probe and adds the contact
-  Future<ContactModel?> resolveAndAddContact(String rawDeviceId, {String? nickname}) async {
+  /// Resolves peer public keys via signaling probe with 6-digit passcode and adds the contact
+  Future<ContactModel?> resolveAndAddContact(
+    String rawDeviceId, {
+    String? nickname,
+    String? passcode,
+  }) async {
     final normalized = normalizeDeviceId(rawDeviceId);
     if (normalized == null) return null;
 
@@ -613,8 +630,8 @@ class ConnectionManager extends ChangeNotifier {
       return existing;
     }
 
-    // 2. Query signaling directory / probe for keys
-    final keys = await signalingClient.resolvePeerKeys(normalized);
+    // 2. Query signaling directory / probe for keys with passcode verification
+    final keys = await signalingClient.resolvePeerKeys(normalized, passcode: passcode);
     if (keys == null || keys['ik'] == null || keys['dh'] == null) {
       return null;
     }

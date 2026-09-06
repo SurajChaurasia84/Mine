@@ -121,7 +121,7 @@ class _MineAppState extends State<MineApp> {
           create: (_) => EncryptedMediaService(cryptoService: widget.cryptoService),
         ),
         if (_signalingClient != null)
-          Provider<SignalingClient>.value(value: _signalingClient!),
+          ChangeNotifierProvider<SignalingClient>.value(value: _signalingClient!),
         if (_connectionManager != null)
           ChangeNotifierProvider<ConnectionManager>.value(value: _connectionManager!),
       ],

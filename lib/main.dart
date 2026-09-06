@@ -22,9 +22,9 @@ void main() async {
   }
 
   // Initialize Core Services
-  final secureKeyStore = SecureKeyStore();
-  final cryptoService = CryptoService();
   final appDatabase = AppDatabase();
+  final secureKeyStore = SecureKeyStore(appDatabase: appDatabase);
+  final cryptoService = CryptoService();
   final contactRepository = ContactRepository(appDatabase: appDatabase);
   final chatRepository = ChatRepository(appDatabase: appDatabase);
 

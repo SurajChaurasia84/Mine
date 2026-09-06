@@ -137,7 +137,7 @@ class _QrDisplayScreenState extends State<QrDisplayScreen> {
                 );
               },
               icon: const Icon(Icons.copy_outlined),
-              label: const Text('Copy Shareable Invite Code'),
+              label: const Text('Copy Invite Code'),
               style: FilledButton.styleFrom(
                 backgroundColor: MineTheme.primaryTeal,
                 foregroundColor: Colors.white,

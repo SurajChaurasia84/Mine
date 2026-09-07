@@ -403,18 +403,33 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
               const SizedBox(width: 12),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () {
+                  onPressed: () async {
                     final payload = id.toPublicInvitePayload(passcode: _passcode);
-                    Clipboard.setData(ClipboardData(text: 'mine://invite?p=$payload'));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Public invite code copied to clipboard!'),
-                        backgroundColor: MineTheme.surfaceDark,
-                      ),
-                    );
+                    final inviteLink = 'mine://invite?p=$payload';
+                    try {
+                      final box = context.findRenderObject() as RenderBox?;
+                      // ignore: deprecated_member_use
+                      await Share.share(
+                        inviteLink,
+                        subject: 'Mine Invite Code',
+                        sharePositionOrigin: box != null
+                            ? box.localToGlobal(Offset.zero) & box.size
+                            : null,
+                      );
+                    } catch (e) {
+                      await Clipboard.setData(ClipboardData(text: inviteLink));
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Invite copied to clipboard!'),
+                            backgroundColor: MineTheme.surfaceDark,
+                          ),
+                        );
+                      }
+                    }
                   },
                   icon: const Icon(Icons.share_outlined),
-                  label: const Text('Copy Invite'),
+                  label: const Text('Share Invite'),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
                     side: const BorderSide(color: Color(0xFF374248)),

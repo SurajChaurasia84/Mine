@@ -557,7 +557,7 @@ class ConnectionManager extends ChangeNotifier {
           senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
           senderDhPublicKey: myIdentity.dhPublicKeyHex,
           timestamp: DateTime.now(),
-          payload: 'key_response',
+          payload: (_myDisplayName != null && _myDisplayName!.isNotEmpty) ? _myDisplayName! : 'key_response',
         );
         signalingClient.sendEnvelope(replyEnvelope);
       } catch (e) {

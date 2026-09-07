@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
@@ -63,12 +64,17 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
 
   Future<void> _initVideo() async {
     try {
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = '${tempDir.path}/preview_${DateTime.now().millisecondsSinceEpoch}.mp4';
-      _tempVideoFile = File(tempPath);
-      await _tempVideoFile!.writeAsBytes(widget.rawBytes, flush: true);
+      if (kIsWeb) {
+        final uri = Uri.dataFromBytes(widget.rawBytes, mimeType: 'video/mp4');
+        _videoController = VideoPlayerController.networkUrl(uri);
+      } else {
+        final tempDir = await getTemporaryDirectory();
+        final tempPath = '${tempDir.path}/preview_${DateTime.now().millisecondsSinceEpoch}.mp4';
+        _tempVideoFile = File(tempPath);
+        await _tempVideoFile!.writeAsBytes(widget.rawBytes, flush: true);
+        _videoController = VideoPlayerController.file(_tempVideoFile!);
+      }
 
-      _videoController = VideoPlayerController.file(_tempVideoFile!);
       await _videoController!.initialize();
       _videoController!.addListener(_onVideoUpdate);
       if (mounted) {
@@ -78,7 +84,9 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
         _videoController!.setLooping(false);
         _videoController!.play();
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[MediaSendPreview] Error initializing video: $e');
+    }
   }
 
   @override
@@ -87,7 +95,7 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
     _focusNode.dispose();
     _videoController?.removeListener(_onVideoUpdate);
     _videoController?.dispose();
-    if (_tempVideoFile != null && _tempVideoFile!.existsSync()) {
+    if (!kIsWeb && _tempVideoFile != null && _tempVideoFile!.existsSync()) {
       try {
         _tempVideoFile!.deleteSync();
       } catch (_) {}

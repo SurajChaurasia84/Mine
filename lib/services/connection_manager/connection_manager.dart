@@ -324,6 +324,7 @@ class ConnectionManager extends ChangeNotifier {
     required ConversationModel conversation,
     required Uint8List rawBytes,
     required String mediaType, // 'photo' | 'video'
+    String? caption,
     bool saveHistory = false,
   }) async {
     final messageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${myIdentity.deviceId.hashCode.abs()}';
@@ -333,6 +334,7 @@ class ConnectionManager extends ChangeNotifier {
     final mediaPayload = await ephemeralMediaService.encryptAndUpload(
       rawBytes: rawBytes,
       mediaType: mediaType,
+      caption: caption,
     );
     final payloadJson = mediaPayload.toJson();
 

@@ -5,7 +5,6 @@ import '../../app/theme.dart';
 import '../../core/crypto/key_pair_bundle.dart';
 import '../../core/storage/app_database.dart';
 import '../../core/storage/secure_key_store.dart';
-import '../../services/signaling/signaling_client.dart';
 
 class SettingsScreen extends StatefulWidget {
   final KeyPairBundle identity;
@@ -17,15 +16,12 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late final TextEditingController _serverController;
   String _passcode = '';
   bool _showPasscode = false;
 
   @override
   void initState() {
     super.initState();
-    final signaling = context.read<SignalingClient>();
-    _serverController = TextEditingController(text: signaling.serverUrl);
     _loadPasscode();
   }
 
@@ -34,26 +30,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final code = await keyStore.getOrGeneratePasscode();
     if (mounted) {
       setState(() => _passcode = code);
-    }
-  }
-
-  @override
-  void dispose() {
-    _serverController.dispose();
-    super.dispose();
-  }
-
-  void _saveServerUrl() {
-    final signaling = context.read<SignalingClient>();
-    final newUrl = _serverController.text.trim();
-    if (newUrl.isNotEmpty) {
-      signaling.updateServerUrl(newUrl);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Signaling server updated to: $newUrl'),
-          backgroundColor: MineTheme.surfaceDark,
-        ),
-      );
     }
   }
 
@@ -66,10 +42,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           backgroundColor: MineTheme.surfaceDark,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: const Row(
             children: [
-              Icon(Icons.lock_reset, color: MineTheme.primaryTeal),
+              Icon(Icons.lock_reset_rounded, color: MineTheme.primaryTeal),
               SizedBox(width: 10),
               Text('Change Passcode', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ],
@@ -79,7 +55,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Enter a new 6-digit numeric Passcode. Others will need this to add you as a contact and message you.',
+                'Enter a 6-digit numeric passcode for contact verification.',
                 style: TextStyle(fontSize: 13, color: MineTheme.textMuted),
               ),
               const SizedBox(height: 16),
@@ -89,15 +65,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 maxLength: 6,
                 autofocus: true,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                style: const TextStyle(fontSize: 18, letterSpacing: 4.0, fontWeight: FontWeight.bold),
+                style: const TextStyle(fontSize: 22, letterSpacing: 6.0, fontWeight: FontWeight.bold),
                 decoration: InputDecoration(
                   counterText: '',
                   hintText: '123456',
-                  hintStyle: const TextStyle(color: MineTheme.textMuted, letterSpacing: 4.0),
+                  hintStyle: const TextStyle(color: MineTheme.textMuted, letterSpacing: 6.0),
                   filled: true,
                   fillColor: MineTheme.backgroundDark,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                  prefixIcon: const Icon(Icons.lock_outline, size: 20, color: MineTheme.primaryTeal),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20, color: MineTheme.primaryTeal),
                 ),
               ),
               if (dialogError != null) ...[
@@ -118,11 +94,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               style: FilledButton.styleFrom(
                 backgroundColor: MineTheme.primaryTeal,
                 foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
               onPressed: () async {
                 final newCode = controller.text.trim();
                 if (!RegExp(r'^\d{6}$').hasMatch(newCode)) {
-                  setDialogState(() => dialogError = 'Passcode must be 6 digits');
+                  setDialogState(() => dialogError = 'Passcode must be exactly 6 digits');
                   return;
                 }
                 final keyStore = context.read<SecureKeyStore>();
@@ -134,13 +111,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   setState(() => _passcode = newCode);
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Security Passcode updated successfully!'),
-                      backgroundColor: MineTheme.surfaceDark,
+                      content: Text('Passcode updated successfully!'),
+                      behavior: SnackBarBehavior.floating,
                     ),
                   );
                 }
               },
-              child: const Text('Save Passcode'),
+              child: const Text('Save'),
             ),
           ],
         ),
@@ -156,9 +133,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: MineTheme.surfaceDark,
-        title: const Text('Wipe All Local Data?'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('Confirm Reset?'),
+          ],
+        ),
         content: const Text(
-          'This will permanently delete all contacts, chat history, and your cryptographic private keys from this device. This action cannot be undone.',
+          'Are you sure you want to delete all chats, contacts, and reset the app? This cannot be undone.',
+          style: TextStyle(color: MineTheme.textLight, fontSize: 14, height: 1.4),
         ),
         actions: [
           TextButton(
@@ -172,8 +157,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               await keyStore.clearIdentity();
               SystemNavigator.pop();
             },
-            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-            child: const Text('Wipe & Reset'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Confirm & Reset'),
           ),
         ],
       ),
@@ -183,211 +171,301 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: MineTheme.backgroundDark,
       appBar: AppBar(
         title: const Text('Settings'),
+        backgroundColor: MineTheme.backgroundDark,
+        elevation: 0,
       ),
       body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         children: [
-          // Identity Section
-          const Text(
-            'ANONYMOUS IDENTITY',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: MineTheme.textMuted, letterSpacing: 1.1),
-          ),
-          const SizedBox(height: 10),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('User ID (Permanent & Immutable)', style: TextStyle(fontSize: 12, color: MineTheme.textMuted)),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: SelectableText(
-                          widget.identity.deviceId,
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: MineTheme.accentGreen),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.copy, size: 18, color: MineTheme.textMuted),
-                        tooltip: 'Copy User ID',
-                        onPressed: () {
-                          Clipboard.setData(ClipboardData(text: widget.identity.deviceId));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('User ID copied to clipboard')),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 24),
-                  const Text('Public Identity Key (Ed25519)', style: TextStyle(fontSize: 12, color: MineTheme.textMuted)),
-                  const SizedBox(height: 4),
-                  SelectableText(
-                    widget.identity.identityPublicKeyHex,
-                    style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: MineTheme.textLight),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          const SizedBox(height: 12),
 
-          const SizedBox(height: 24),
-
-          // Security Passcode Section
-          const Text(
-            'PRIVACY & ACCESS PROTECTION',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: MineTheme.textMuted, letterSpacing: 1.1),
-          ),
-          const SizedBox(height: 10),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.lock_outline, size: 18, color: MineTheme.primaryTeal),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Security Passcode (6-Digit)',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: MineTheme.textLight),
-                      ),
-                      const Spacer(),
-                      TextButton.icon(
-                        onPressed: _showChangePasscodeDialog,
-                        icon: const Icon(Icons.edit, size: 14, color: MineTheme.primaryTeal),
-                        label: const Text('Change', style: TextStyle(color: MineTheme.primaryTeal, fontSize: 13)),
-                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Anyone who searches your User ID MUST enter this 6-digit Passcode. Without it, they cannot add you as a contact or message you.',
-                    style: TextStyle(fontSize: 12, color: MineTheme.textMuted, height: 1.3),
-                  ),
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: MineTheme.backgroundDark,
-                      borderRadius: BorderRadius.circular(10),
+          // 1. Hero Profile Header
+          Center(
+            child: Column(
+              children: [
+                Container(
+                  width: 84,
+                  height: 84,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [
+                        MineTheme.primaryTeal.withAlpha(220),
+                        MineTheme.primaryDark,
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
-                    child: Row(
+                    boxShadow: [
+                      BoxShadow(
+                        color: MineTheme.primaryTeal.withAlpha(45),
+                        blurRadius: 20,
+                        spreadRadius: 4,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.fingerprint_rounded,
+                    size: 46,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SelectableText(
+                  widget.identity.deviceId,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: MineTheme.textLight,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () {
+                    Clipboard.setData(ClipboardData(text: widget.identity.deviceId));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('User ID copied to clipboard'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withAlpha(12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Expanded(
-                          child: Text(
-                            _showPasscode ? _passcode : '• • • • • •',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: _showPasscode ? 4.0 : 6.0,
-                              color: MineTheme.accentGreen,
-                            ),
+                        Icon(Icons.copy_rounded, size: 14, color: MineTheme.accentGreen),
+                        SizedBox(width: 6),
+                        Text(
+                          'Copy User ID',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: MineTheme.accentGreen,
+                            fontWeight: FontWeight.w600,
                           ),
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            _showPasscode ? Icons.visibility_off : Icons.visibility,
-                            size: 18,
-                            color: MineTheme.textMuted,
-                          ),
-                          tooltip: _showPasscode ? 'Hide Passcode' : 'Show Passcode',
-                          onPressed: () => setState(() => _showPasscode = !_showPasscode),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.copy, size: 18, color: MineTheme.textMuted),
-                          tooltip: 'Copy Passcode',
-                          onPressed: () {
-                            Clipboard.setData(ClipboardData(text: _passcode));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Passcode copied to clipboard')),
-                            );
-                          },
                         ),
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // Network & Signaling Gateway
-          const Text(
-            'PUBLIC RELAY BROKER (ZERO HOSTING)',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: MineTheme.textMuted, letterSpacing: 1.1),
-          ),
-          const SizedBox(height: 10),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Relay Broker Host',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Default: broker.hivemq.com (Zero setup, no hosting, works worldwide over mobile data/WiFi). The relay only forwards opaque AES-256-GCM ciphertext.',
-                    style: TextStyle(fontSize: 12, color: MineTheme.textMuted),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _serverController,
-                    decoration: InputDecoration(
-                      filled: true,
-                      fillColor: MineTheme.backgroundDark,
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.save_outlined, color: MineTheme.primaryTeal),
-                        onPressed: _saveServerUrl,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // Security & Purge Section
-          const Text(
-            'LOCAL SECURITY & PRIVACY',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: MineTheme.textMuted, letterSpacing: 1.1),
-          ),
-          const SizedBox(height: 10),
-          Card(
-            child: Column(
-              children: [
-                const ListTile(
-                  leading: Icon(Icons.shield_outlined, color: MineTheme.primaryTeal),
-                  title: Text('Ciphertext-At-Rest Storage'),
-                  subtitle: Text('Local SQLite DB stores strictly encrypted bytes', style: TextStyle(fontSize: 12, color: MineTheme.textMuted)),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.delete_forever, color: Colors.redAccent),
-                  title: const Text('Wipe All Local Data', style: TextStyle(color: Colors.redAccent)),
-                  subtitle: const Text('Destroys local keys, messages, and contacts', style: TextStyle(fontSize: 12, color: MineTheme.textMuted)),
-                  onTap: _confirmWipeData,
                 ),
               ],
             ),
           ),
+
+          const SizedBox(height: 36),
+
+          // 2. Settings Items (Seamless, unified list style)
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 8),
+            child: Text(
+              'ACCOUNT & SECURITY',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: MineTheme.textMuted,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+
+          // Passcode Row
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: _showChangePasscodeDialog,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: MineTheme.primaryTeal.withAlpha(30),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.lock_rounded, size: 20, color: MineTheme.primaryTeal),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Passcode',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: MineTheme.textLight),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _showPasscode ? _passcode : '• • • • • •',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: _showPasscode ? 2.0 : 4.0,
+                            color: MineTheme.accentGreen,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      _showPasscode ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                      size: 20,
+                      color: MineTheme.textMuted,
+                    ),
+                    tooltip: _showPasscode ? 'Hide' : 'Show',
+                    onPressed: () => setState(() => _showPasscode = !_showPasscode),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy_rounded, size: 18, color: MineTheme.textMuted),
+                    tooltip: 'Copy',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: _passcode));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Passcode copied to clipboard'),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
+                    },
+                  ),
+                  const Icon(Icons.chevron_right_rounded, color: MineTheme.textMuted, size: 20),
+                ],
+              ),
+            ),
+          ),
+
+          Divider(height: 1, color: Colors.white.withAlpha(12), indent: 56),
+
+          // Encryption Row
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: MineTheme.accentGreen.withAlpha(30),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.shield_rounded, size: 20, color: MineTheme.accentGreen),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Text(
+                    'Encryption',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: MineTheme.textLight),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: MineTheme.accentGreen.withAlpha(25),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'End-to-End',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: MineTheme.accentGreen,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 28),
+
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 8),
+            child: Text(
+              'DATA & PRIVACY',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: MineTheme.textMuted,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+
+          // Reset Data Row
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: _confirmWipeData,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withAlpha(30),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.delete_forever_rounded, size: 20, color: Colors.redAccent),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Text(
+                      'Clear All Data & Reset',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.redAccent,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded, color: MineTheme.textMuted, size: 20),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 48),
+
+          // Footer branding
+          Center(
+            child: Column(
+              children: [
+                Text(
+                  'Mine',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.5,
+                    color: Colors.white.withAlpha(70),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Peer-to-Peer & Ephemeral',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: Colors.white.withAlpha(40),
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
         ],
       ),
     );
   }
 }
-

@@ -28,8 +28,9 @@ void main() async {
   final contactRepository = ContactRepository(appDatabase: appDatabase);
   final chatRepository = ChatRepository(appDatabase: appDatabase);
 
-  // Pre-fetch identity for instant launch without loading spinner
+  // Pre-fetch identity & displayName for instant launch and glitch-free avatar rendering
   final initialIdentity = await secureKeyStore.getIdentity();
+  final initialDisplayName = await secureKeyStore.getDisplayName();
 
   runApp(
     MineApp(
@@ -39,6 +40,7 @@ void main() async {
       contactRepository: contactRepository,
       chatRepository: chatRepository,
       initialIdentity: initialIdentity,
+      initialDisplayName: initialDisplayName,
     ),
   );
 }

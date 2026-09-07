@@ -32,6 +32,7 @@ dependencies:
   http: ^1.2.2
   camera: ^0.12.1
   image: ^4.9.2
+  google_fonts: ^8.2.1
 
 dev_dependencies:
   flutter_test:

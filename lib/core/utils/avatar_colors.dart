@@ -37,6 +37,7 @@ class AvatarColors {
 /// - Emojis / symbols -> displays person icon
 class UserAvatar extends StatelessWidget {
   final String nameOrId;
+  final String? colorKey;
   final double radius;
   final double? fontSize;
   final double? iconSize;
@@ -44,6 +45,7 @@ class UserAvatar extends StatelessWidget {
   const UserAvatar({
     super.key,
     required this.nameOrId,
+    this.colorKey,
     this.radius = 24,
     this.fontSize,
     this.iconSize,
@@ -51,7 +53,7 @@ class UserAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = AvatarColors.forName(nameOrId);
+    final colors = AvatarColors.forName(colorKey ?? nameOrId);
     final trimmed = nameOrId.trim();
 
     Widget child;

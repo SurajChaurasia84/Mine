@@ -7,6 +7,7 @@ import '../../data/models/contact_model.dart';
 import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/contact_repository.dart';
 import '../../services/connection_manager/connection_manager.dart';
+import '../chat/widgets/emoji_picker_widget.dart';
 
 class AddContactScreen extends StatefulWidget {
   final ContactRepository contactRepository;
@@ -127,7 +128,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
         } else {
           setState(() {
             _isResolving = false;
-            _errorMessage = 'Could not reach user "$normalized" right now. Ensure they have opened Mine with an active internet connection.';
+            _errorMessage = 'Could not find user "$normalized" right now.';
           });
           return;
         }
@@ -177,6 +178,59 @@ class _AddContactScreenState extends State<AddContactScreen> {
     } catch (e) {
       setState(() => _errorMessage = 'Error saving contact: $e');
     }
+  }
+
+  void _onNicknameEmojiSelected(String emoji) {
+    final text = _nicknameController.text;
+    final selection = _nicknameController.selection;
+    final start = selection.start >= 0 ? selection.start : text.length;
+    final end = selection.end >= 0 ? selection.end : text.length;
+    final newText = text.replaceRange(start, end, emoji);
+    _nicknameController.text = newText;
+    _nicknameController.selection = TextSelection.collapsed(offset: start + emoji.length);
+    setState(() {});
+  }
+
+  void _onNicknameEmojiBackspace() {
+    final text = _nicknameController.text;
+    if (text.isNotEmpty) {
+      _nicknameController.text = text.characters.skipLast(1).toString();
+      _nicknameController.selection = TextSelection.collapsed(offset: _nicknameController.text.length);
+      setState(() {});
+    }
+  }
+
+  void _showNicknameEmojiPicker() {
+    FocusScope.of(context).unfocus();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: MineTheme.surfaceDark,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SizedBox(
+        height: 310,
+        child: Column(
+          children: [
+            Container(
+              margin: const EdgeInsets.only(top: 8, bottom: 4),
+              width: 38,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Expanded(
+              child: EmojiPickerWidget(
+                onEmojiSelected: _onNicknameEmojiSelected,
+                onBackspace: _onNicknameEmojiBackspace,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -258,23 +312,31 @@ class _AddContactScreenState extends State<AddContactScreen> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: _passcodeController,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
                   obscureText: !_showPasscode,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
                   onChanged: (_) => _onInputChanged(),
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  style: const TextStyle(fontSize: 18, letterSpacing: 4.0, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 18,
+                    letterSpacing: 4.0,
+                    fontWeight: FontWeight.bold,
+                  ),
                   decoration: InputDecoration(
-                    counterText: '',
-                    hintText: '• • • • • •',
-                    hintStyle: const TextStyle(color: MineTheme.textMuted, letterSpacing: 4.0),
+                    hintText: '6-digit passcode',
+                    hintStyle: const TextStyle(
+                      color: MineTheme.textMuted,
+                      letterSpacing: 0,
+                      fontSize: 14,
+                    ),
                     filled: true,
                     fillColor: MineTheme.surfaceDark,
                     prefixIcon: const Icon(Icons.lock_outline, color: MineTheme.primaryTeal),
                     suffixIcon: IconButton(
                       icon: Icon(
                         _showPasscode ? Icons.visibility_off : Icons.visibility,
-                        size: 20,
                         color: MineTheme.textMuted,
                       ),
                       onPressed: () => setState(() => _showPasscode = !_showPasscode),
@@ -303,6 +365,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
                 TextField(
                   controller: _nicknameController,
                   focusNode: _nicknameFocusNode,
+                  textCapitalization: TextCapitalization.words,
                   autofocus: true,
                   onChanged: (_) => setState(() {}),
                   style: const TextStyle(
@@ -317,6 +380,11 @@ class _AddContactScreenState extends State<AddContactScreen> {
                     prefixIcon: const Icon(
                       Icons.badge_outlined,
                       color: MineTheme.primaryTeal,
+                    ),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.emoji_emotions_outlined, color: MineTheme.primaryTeal, size: 22),
+                      tooltip: 'Emoji',
+                      onPressed: _showNicknameEmojiPicker,
                     ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),

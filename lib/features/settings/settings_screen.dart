@@ -276,7 +276,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _shareInvite() async {
-    final payload = widget.identity.toPublicInvitePayload(passcode: _passcode);
+    final payload = widget.identity.toPublicInvitePayload(passcode: _passcode, name: _displayName);
     final inviteLink = 'mine://invite?p=$payload';
     try {
       final box = context.findRenderObject() as RenderBox?;
@@ -575,7 +575,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     icon: const Icon(Icons.copy_rounded, size: 18, color: MineTheme.textMuted),
                     tooltip: 'Copy Invite Link',
                     onPressed: () {
-                      final payload = widget.identity.toPublicInvitePayload(passcode: _passcode);
+                      final payload = widget.identity.toPublicInvitePayload(passcode: _passcode, name: _displayName);
                       Clipboard.setData(ClipboardData(text: 'mine://invite?p=$payload'));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(

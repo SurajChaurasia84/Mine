@@ -330,12 +330,14 @@ class _ChatListScreenState extends State<ChatListScreen> {
             if (detectedDeviceId != null && !isOwnDevice && !alreadyExists)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1F2C34),
+                child: Material(
+                  color: const Color(0xFF1F2C34),
+                  borderRadius: BorderRadius.circular(14),
+                  shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: MineTheme.accentGreen.withValues(alpha: 0.35)),
+                    side: BorderSide(color: MineTheme.accentGreen.withValues(alpha: 0.35)),
                   ),
+                  clipBehavior: Clip.antiAlias,
                   child: ListTile(
                     contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
                     leading: CircleAvatar(
@@ -406,25 +408,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
                               final contact = conv.contact;
                               if (contact == null) return const SizedBox.shrink();
 
-                              final avatarColors = AvatarColors.forName(
-                                contact.nickname.isNotEmpty ? contact.nickname : contact.id,
-                              );
-
                               return ListTile(
                                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                leading: CircleAvatar(
+                                leading: UserAvatar(
+                                  nameOrId: contact.nickname.isNotEmpty ? contact.nickname : contact.id,
                                   radius: 25,
-                                  backgroundColor: avatarColors.background,
-                                  child: Text(
-                                    contact.nickname.isNotEmpty
-                                        ? contact.nickname[0].toUpperCase()
-                                        : '?',
-                                    style: TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                      color: avatarColors.foreground,
-                                    ),
-                                  ),
                                 ),
                                 title: Text(
                                   contact.nickname,

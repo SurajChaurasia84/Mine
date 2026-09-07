@@ -165,6 +165,14 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     });
   }
 
+  ChatRepository? _chatRepo;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _chatRepo ??= context.read<ChatRepository>();
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -174,6 +182,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     _readReceiptSub?.cancel();
     _historyToggleSub?.cancel();
     _scrollController.dispose();
+    if (!_saveHistory) {
+      _chatRepo?.clearTransientMessages(widget.conversation.id);
+    }
     super.dispose();
   }
 
@@ -748,8 +759,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
               } else if (value == 'clear_chat') {
                 await _clearChat();
               } else if (value == 'delete_contact') {
+                final contactRepo = context.read<ContactRepository>();
                 final navigator = Navigator.of(context);
-                await context.read<ContactRepository>().deleteContact(_currentContact.id);
+                await contactRepo.deleteContact(_currentContact.id);
                 if (mounted) navigator.pop();
               }
             },

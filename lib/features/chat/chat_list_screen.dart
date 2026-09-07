@@ -177,7 +177,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   Widget build(BuildContext context) {
     // Listen to ConnectionManager to refresh when new messages arrive
-    context.watch<ConnectionManager>();
+    final connManager = context.watch<ConnectionManager>();
     final signalingClient = context.watch<SignalingClient>();
     final isSignalingConnected = signalingClient.state == SignalingServerState.connected;
 
@@ -260,17 +260,30 @@ class _ChatListScreenState extends State<ChatListScreen> {
               );
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => SettingsScreen(identity: widget.identity),
+          Padding(
+            padding: const EdgeInsets.only(right: 14.0, left: 4.0),
+            child: Center(
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SettingsScreen(identity: widget.identity),
+                    ),
+                  );
+                  if (mounted) setState(() {});
+                },
+                child: UserAvatar(
+                  nameOrId: (connManager.myDisplayName != null && connManager.myDisplayName!.isNotEmpty)
+                      ? connManager.myDisplayName!
+                      : widget.identity.deviceId,
+                  radius: 17,
+                  fontSize: 14,
+                  iconSize: 19,
                 ),
-              );
-            },
+              ),
+            ),
           ),
         ],
       ),
@@ -332,7 +345,6 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 child: Material(
                   color: const Color(0xFF1F2C34),
-                  borderRadius: BorderRadius.circular(14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                     side: BorderSide(color: MineTheme.accentGreen.withValues(alpha: 0.35)),
@@ -362,7 +374,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         minimumSize: Size.zero,
                       ),
                       onPressed: () => _openAddContactScreen(initialCode: detectedDeviceId),
-                      child: const Text('Add & Chat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      child: const Text('Continue', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     ),
                     onTap: () => _openAddContactScreen(initialCode: detectedDeviceId),
                   ),
@@ -391,7 +403,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                           ? Center(
                               child: Text(
                                 detectedDeviceId != null && !isOwnDevice && !alreadyExists
-                                    ? 'Tap "Add & Chat" above to message this device'
+                                    ? 'Tap "Continue" above to message this device'
                                     : 'No chats found for "$_searchQuery"',
                                 style: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
                               ),

@@ -404,7 +404,8 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () async {
-                    final payload = id.toPublicInvitePayload(passcode: _passcode);
+                    final name = _nameController.text.trim();
+                    final payload = id.toPublicInvitePayload(passcode: _passcode, name: name.isNotEmpty ? name : null);
                     final inviteLink = 'mine://invite?p=$payload';
                     try {
                       final box = context.findRenderObject() as RenderBox?;

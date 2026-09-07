@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../app/theme.dart';
 import '../../core/utils/avatar_colors.dart';
@@ -11,9 +13,11 @@ import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/contact_repository.dart';
 import '../../services/connection_manager/connection_manager.dart';
 import '../../services/connection_manager/peer_connection_state.dart';
+import '../../services/media/ephemeral_media_service.dart';
 import '../contacts/nickname_edit_dialog.dart';
 import 'widgets/chat_doodle_painter.dart';
 import 'widgets/chat_input_bar.dart';
+import 'widgets/ephemeral_media_viewer_screen.dart';
 import 'widgets/message_bubble.dart';
 
 class ChatConversationScreen extends StatefulWidget {
@@ -35,7 +39,7 @@ class ChatConversationScreen extends StatefulWidget {
 class _ChatConversationScreenState extends State<ChatConversationScreen> {
   late ContactModel _currentContact;
   final List<MessageModel> _messages = [];
-  final ScrollController _scrollController = ScrollController();
+  late final ScrollController _scrollController = ScrollController(initialScrollOffset: 999999.0);
   final GlobalKey<ChatInputBarState> _inputKey = GlobalKey<ChatInputBarState>();
   StreamSubscription? _messageSub;
   StreamSubscription? _receiptSub;
@@ -138,6 +142,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         _messages.clear();
         _messages.addAll(msgs);
       });
+      _scrollToBottom(animate: false);
     }
 
     // Send read receipt for all incoming messages in this chat
@@ -154,14 +159,15 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   void _scrollToBottom({bool animate = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
+        final maxScroll = _scrollController.position.maxScrollExtent;
         if (animate) {
           _scrollController.animateTo(
-            0.0,
+            maxScroll,
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,
           );
         } else {
-          _scrollController.jumpTo(0.0);
+          _scrollController.jumpTo(maxScroll);
         }
       }
     });
@@ -180,6 +186,299 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       _messages.add(sentMsg);
     });
     _scrollToBottom(animate: true);
+  }
+
+  Future<void> _handleAttachMedia() async {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: MineTheme.surfaceDark,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildMediaOption(
+                      icon: Icons.camera_alt_rounded,
+                      label: 'Camera\nPhoto',
+                      color: const Color(0xFFFF2D55),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _pickAndSendMedia(ImageSource.camera, isVideo: false);
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildMediaOption(
+                      icon: Icons.videocam_rounded,
+                      label: 'Camera\nVideo',
+                      color: const Color(0xFFA855F7),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _pickAndSendMedia(ImageSource.camera, isVideo: true);
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildMediaOption(
+                      icon: Icons.photo_library_rounded,
+                      label: 'Gallery\nPhoto',
+                      color: const Color(0xFF38BDF8),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _pickAndSendMedia(ImageSource.gallery, isVideo: false);
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildMediaOption(
+                      icon: Icons.video_library_rounded,
+                      label: 'Gallery\nVideo',
+                      color: const Color(0xFF4ADE80),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _pickAndSendMedia(ImageSource.gallery, isVideo: true);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMediaOption({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: color.withAlpha(35),
+                shape: BoxShape.circle,
+                border: Border.all(color: color.withAlpha(100), width: 1.5),
+              ),
+              child: Icon(icon, color: color, size: 24),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              style: const TextStyle(
+                color: MineTheme.textLight,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
+                height: 1.2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndSendMedia(ImageSource source, {required bool isVideo}) async {
+    try {
+      final picker = ImagePicker();
+      final XFile? file;
+      if (isVideo) {
+        file = await picker.pickVideo(source: source);
+      } else {
+        file = await picker.pickImage(source: source, imageQuality: 85);
+      }
+
+      if (file == null) return;
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
+              Text('Encrypting & sending ${isVideo ? 'video' : 'photo'}...'),
+            ],
+          ),
+          backgroundColor: MineTheme.surfaceDark,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+
+      final connManager = context.read<ConnectionManager>();
+      final rawBytes = await file.readAsBytes();
+
+      final sentMsg = await connManager.sendEphemeralMedia(
+        contact: _currentContact,
+        conversation: widget.conversation,
+        rawBytes: rawBytes,
+        mediaType: isVideo ? 'video' : 'photo',
+      );
+
+      if (mounted) {
+        setState(() {
+          _messages.add(sentMsg);
+        });
+        _scrollToBottom(animate: true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send media: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleOpenEphemeral(MessageModel msg) async {
+    if (msg.isExpired || msg.viewCount >= 2) return;
+
+    final connManager = context.read<ConnectionManager>();
+
+    // 1. Ensure decrypted content is present
+    String? content = msg.decryptedContent;
+    if (content == null || content.isEmpty) {
+      content = await connManager.decryptMessageContent(msg, _currentContact);
+    }
+
+    if (content == null || content.isEmpty || content == '[Unable to decrypt]') {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to decrypt media.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      return;
+    }
+
+    final payload = EphemeralMediaPayload.tryParse(content);
+    if (payload == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid media payload.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show loading indicator while downloading & decrypting into memory
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Center(
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: MineTheme.surfaceDark,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(color: MineTheme.primaryTeal),
+              const SizedBox(height: 16),
+              Text(
+                'Decrypting ${payload.mediaType} into memory...',
+                style: const TextStyle(color: MineTheme.textLight, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    Uint8List rawBytes;
+    try {
+      rawBytes = await connManager.ephemeralMediaService.downloadAndDecrypt(payload);
+    } catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop(); // Close dialog
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load media: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (mounted) Navigator.of(context, rootNavigator: true).pop(); // Close loading dialog
+
+    if (!mounted) return;
+
+    final isMe = msg.senderId.trim().toUpperCase() == connManager.myIdentity.deviceId.trim().toUpperCase();
+
+    // Open full screen viewer (no timer bar)
+    final viewed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EphemeralMediaViewerScreen(
+          rawBytes: rawBytes,
+          mediaType: payload.mediaType,
+          senderName: isMe ? 'You' : _currentContact.nickname,
+        ),
+      ),
+    );
+
+    if (viewed == true && mounted) {
+      await connManager.markEphemeralMessageViewed(msg);
+      final newCount = msg.viewCount + 1;
+      final isNowExpired = newCount >= 2;
+
+      setState(() {
+        final idx = _messages.indexWhere((m) => m.id == msg.id);
+        if (idx != -1) {
+          _messages[idx] = _messages[idx].copyWith(
+            viewCount: newCount,
+            isExpired: isNowExpired,
+          );
+        }
+      });
+    }
   }
 
   Future<void> _deleteMessage(MessageModel msg) async {
@@ -348,7 +647,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                                 const SizedBox(height: 40),
                                 const Center(
                                   child: Text(
-                                    'No messages yet.\nSay hello!',
+                                    'No messages yet.\nStart the conversation!',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
                                   ),
@@ -356,20 +655,20 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                               ],
                             )
                           : ListView.builder(
-                              reverse: true,
                               controller: _scrollController,
                               itemCount: _messages.length + 1,
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               itemBuilder: (context, index) {
-                                if (index == _messages.length) {
+                                if (index == 0) {
                                   return _buildEncryptionNote();
                                 }
-                                final msg = _messages[_messages.length - 1 - index];
+                                final msg = _messages[index - 1];
                                 final isMe = msg.senderId != _currentContact.peerDeviceId;
                                 return MessageBubble(
                                   message: msg,
                                   isMe: isMe,
                                   onDelete: () => _deleteMessage(msg),
+                                  onOpenEphemeral: _handleOpenEphemeral,
                                 );
                               },
                             ),
@@ -380,14 +679,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
               ChatInputBar(
                 key: _inputKey,
                 onSend: _handleSendMessage,
-                onAttach: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Media will be encrypted before transmission.'),
-                      backgroundColor: MineTheme.surfaceDark,
-                    ),
-                  );
-                },
+                onAttach: _handleAttachMedia,
               ),
             ],
           ),

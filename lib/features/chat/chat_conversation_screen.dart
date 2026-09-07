@@ -22,6 +22,7 @@ import 'widgets/ephemeral_media_viewer_screen.dart';
 import 'widgets/media_send_preview_screen.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/save_history_icon_button.dart';
+import 'widgets/whatsapp_camera_screen.dart';
 
 class ChatConversationScreen extends StatefulWidget {
   final ContactModel contact;
@@ -318,59 +319,81 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
   }
 
   Future<void> _handleCameraTap() async {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: MineTheme.surfaceDark,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    final result = await Navigator.push<CapturedMedia>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const WhatsAppCameraScreen(),
       ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildMediaOption(
-                      icon: Icons.photo_camera_rounded,
-                      label: 'Take\nPhoto',
-                      color: const Color(0xFFFF2D55),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _pickAndSendMedia(ImageSource.camera, isVideo: false);
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildMediaOption(
-                      icon: Icons.videocam_rounded,
-                      label: 'Record\nVideo',
-                      color: const Color(0xFFA855F7),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _pickAndSendMedia(ImageSource.camera, isVideo: true);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-            ],
-          ),
+    );
+
+    if (result == null) return;
+    if (!mounted) return;
+
+    // WhatsApp-style Media Preview with caption before sending
+    final previewResult = await Navigator.push<MediaSendResult>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MediaSendPreviewScreen(
+          rawBytes: result.rawBytes,
+          mediaType: result.mediaType,
+          recipientName: _currentContact.nickname,
         ),
       ),
     );
+
+    if (previewResult == null || !previewResult.shouldSend) return;
+    if (!mounted) return;
+
+    final isVideo = result.mediaType == 'video';
+    final connManager = context.read<ConnectionManager>();
+    final tempMessageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${connManager.myIdentity.deviceId.hashCode.abs()}';
+
+    final pendingMsg = MessageModel(
+      id: tempMessageId,
+      conversationId: widget.conversation.id,
+      senderId: connManager.myIdentity.deviceId,
+      ciphertext: '',
+      timestamp: DateTime.now(),
+      status: MessageStatus.pending,
+      messageType: isVideo ? MessageType.video : MessageType.image,
+      viewCount: 0,
+      isExpired: false,
+      decryptedContent: jsonEncode({
+        'type': 'ephemeral_media',
+        'mediaType': isVideo ? 'video' : 'photo',
+        'caption': previewResult.caption,
+      }),
+    );
+
+    if (mounted) {
+      setState(() {
+        _messages.add(pendingMsg);
+      });
+      _scrollToBottom(animate: true);
+    }
+
+    try {
+      final sentMsg = await connManager.sendEphemeralMedia(
+        contact: _currentContact,
+        conversation: widget.conversation,
+        rawBytes: result.rawBytes,
+        mediaType: isVideo ? 'video' : 'photo',
+        caption: previewResult.caption.isNotEmpty ? previewResult.caption : null,
+        saveHistory: _saveHistory,
+      );
+
+      if (mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m.id == tempMessageId || m.id == sentMsg.id);
+          if (idx != -1) {
+            _messages[idx] = sentMsg;
+          } else {
+            _messages.add(sentMsg);
+          }
+        });
+        _scrollToBottom(animate: true);
+      }
+    } catch (_) {}
   }
 
   Widget _buildMediaOption({
@@ -425,13 +448,20 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         file = await picker.pickImage(
           source: source,
           imageQuality: 80,
-          maxWidth: 1280,
-          maxHeight: 1280,
+          maxWidth: 1920,
+          maxHeight: 1920,
         );
       }
 
       if (file == null) return;
       final rawBytes = await file.readAsBytes();
+
+      final actualIsVideo = isVideo ||
+          file.path.toLowerCase().endsWith('.mp4') ||
+          file.path.toLowerCase().endsWith('.mov') ||
+          file.path.toLowerCase().endsWith('.mkv') ||
+          file.path.toLowerCase().endsWith('.webm') ||
+          file.path.toLowerCase().endsWith('.avi');
 
       if (!mounted) return;
 
@@ -441,7 +471,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         MaterialPageRoute(
           builder: (_) => MediaSendPreviewScreen(
             rawBytes: rawBytes,
-            mediaType: isVideo ? 'video' : 'photo',
+            mediaType: actualIsVideo ? 'video' : 'photo',
             recipientName: _currentContact.nickname,
           ),
         ),
@@ -460,12 +490,12 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         ciphertext: '',
         timestamp: DateTime.now(),
         status: MessageStatus.pending,
-        messageType: isVideo ? MessageType.video : MessageType.image,
+        messageType: actualIsVideo ? MessageType.video : MessageType.image,
         viewCount: 0,
         isExpired: false,
         decryptedContent: jsonEncode({
           'type': 'ephemeral_media',
-          'mediaType': isVideo ? 'video' : 'photo',
+          'mediaType': actualIsVideo ? 'video' : 'photo',
           'caption': previewResult.caption,
         }),
       );
@@ -481,7 +511,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         contact: _currentContact,
         conversation: widget.conversation,
         rawBytes: rawBytes,
-        mediaType: isVideo ? 'video' : 'photo',
+        mediaType: actualIsVideo ? 'video' : 'photo',
         caption: previewResult.caption.isNotEmpty ? previewResult.caption : null,
         saveHistory: _saveHistory,
       );
@@ -588,7 +618,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     final isMe = msg.senderId.trim().toUpperCase() == connManager.myIdentity.deviceId.trim().toUpperCase();
 
     // Open full screen viewer (no timer bar)
-    final viewed = await Navigator.push<bool>(
+    await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => EphemeralMediaViewerScreen(
@@ -600,7 +630,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
       ),
     );
 
-    if (viewed == true && mounted) {
+    if (mounted) {
       await connManager.markEphemeralMessageViewed(msg);
       final newCount = msg.viewCount + 1;
       final isNowExpired = newCount >= 2;

@@ -46,20 +46,26 @@ class MessageModel {
   });
 
   MessageModel copyWith({
+    String? id,
+    String? conversationId,
+    String? senderId,
+    String? ciphertext,
+    DateTime? timestamp,
     MessageStatus? status,
+    MessageType? messageType,
     int? viewCount,
     bool? isExpired,
     String? decryptedContent,
     String? localAttachmentPath,
   }) {
     return MessageModel(
-      id: id,
-      conversationId: conversationId,
-      senderId: senderId,
-      ciphertext: ciphertext,
-      timestamp: timestamp,
+      id: id ?? this.id,
+      conversationId: conversationId ?? this.conversationId,
+      senderId: senderId ?? this.senderId,
+      ciphertext: ciphertext ?? this.ciphertext,
+      timestamp: timestamp ?? this.timestamp,
       status: status ?? this.status,
-      messageType: messageType,
+      messageType: messageType ?? this.messageType,
       viewCount: viewCount ?? this.viewCount,
       isExpired: isExpired ?? this.isExpired,
       decryptedContent: decryptedContent ?? this.decryptedContent,

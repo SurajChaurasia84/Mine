@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../app/theme.dart';
 import '../../core/crypto/key_pair_bundle.dart';
@@ -28,7 +29,6 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   List<ConversationModel> _conversations = [];
-  bool _isLoading = true;
   StreamSubscription? _messageSub;
   StreamSubscription? _receiptSub;
   StreamSubscription? _readReceiptSub;
@@ -84,11 +84,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final chatRepo = context.read<ChatRepository>();
     final connManager = context.read<ConnectionManager>();
 
-    List<ConversationModel> convs = [];
     try {
-      convs = await chatRepo.getConversations();
+      final convs = await chatRepo.getConversations();
+      if (mounted) {
+        setState(() {
+          _conversations = convs;
+        });
+      }
 
       // Decrypt last message preview and calculate unread count for each conversation
+      bool hasUpdates = false;
       for (final conv in convs) {
         if (conv.contact != null) {
           final lastMsg = await chatRepo.getLastMessage(conv.id);
@@ -106,19 +111,20 @@ class _ChatListScreenState extends State<ChatListScreen> {
             conv.lastMessageSnippet = displaySnippet;
             conv.lastMessageStatus = lastMsg.status;
             conv.lastMessageIsMe = lastMsg.senderId.trim().toUpperCase() == widget.identity.deviceId.trim().toUpperCase();
+            hasUpdates = true;
           }
-          conv.unreadCount = await chatRepo.getUnreadCount(conv.id, widget.identity.deviceId);
+          final unread = await chatRepo.getUnreadCount(conv.id, widget.identity.deviceId);
+          if (conv.unreadCount != unread) {
+            conv.unreadCount = unread;
+            hasUpdates = true;
+          }
         }
+      }
+      if (hasUpdates && mounted) {
+        setState(() {});
       }
     } catch (e) {
       debugPrint('[ChatList] Error loading conversations: $e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _conversations = convs;
-          _isLoading = false;
-        });
-      }
     }
   }
 
@@ -162,6 +168,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
           onContactAdded: (newContact) async {
             final chatRepo = context.read<ChatRepository>();
             final conv = await chatRepo.getOrCreateConversation(newContact.id);
+            if (!mounted) return;
             conv.contact = newContact;
             _searchController.clear();
             _searchFocusNode.unfocus();
@@ -204,22 +211,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            ShaderMask(
-              shaderCallback: (bounds) => const LinearGradient(
-                colors: [
-                  Color(0xFFFFFFFF),
-                  Color(0xFF25D366),
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ).createShader(bounds),
-              child: const Text(
-                'Mine',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
-                  color: Colors.white,
+            Text(
+              'Mine',
+              style: GoogleFonts.inter(
+                fontSize: 23,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.3,
+                color: Colors.white,
+                textStyle: const TextStyle(
+                  fontFamilyFallback: [
+                    '-apple-system',
+                    'BlinkMacSystemFont',
+                    'Segoe UI',
+                    'Roboto',
+                    'Helvetica Neue',
+                    'Arial',
+                    'sans-serif',
+                  ],
                 ),
               ),
             ),
@@ -278,6 +286,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   nameOrId: (connManager.myDisplayName != null && connManager.myDisplayName!.isNotEmpty)
                       ? connManager.myDisplayName!
                       : widget.identity.deviceId,
+                  colorKey: widget.identity.deviceId,
                   radius: 17,
                   fontSize: 14,
                   iconSize: 19,
@@ -374,7 +383,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                         minimumSize: Size.zero,
                       ),
                       onPressed: () => _openAddContactScreen(initialCode: detectedDeviceId),
-                      child: const Text('Continue', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      child: const Text('Add', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     ),
                     onTap: () => _openAddContactScreen(initialCode: detectedDeviceId),
                   ),
@@ -396,23 +405,21 @@ class _ChatListScreenState extends State<ChatListScreen> {
               ),
             // Conversation list or tabs
             Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator(color: MineTheme.primaryTeal))
-                  : filteredConvs.isEmpty
-                      ? (_searchQuery.isNotEmpty
-                          ? Center(
-                              child: Text(
-                                detectedDeviceId != null && !isOwnDevice && !alreadyExists
-                                    ? 'Tap "Continue" above to message this device'
-                                    : 'No chats found for "$_searchQuery"',
-                                style: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
-                              ),
-                            )
-                          : _buildEmptyState())
-                      : RefreshIndicator(
-                          onRefresh: _loadConversations,
-                          color: MineTheme.primaryTeal,
-                          child: ListView.builder(
+              child: filteredConvs.isEmpty
+                  ? (_searchQuery.isNotEmpty
+                      ? Center(
+                          child: Text(
+                            detectedDeviceId != null && !isOwnDevice && !alreadyExists
+                                ? 'Tap "Add" above to message this device'
+                                : 'No chats found for "$_searchQuery"',
+                            style: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
+                          ),
+                        )
+                      : _buildEmptyState())
+                  : RefreshIndicator(
+                      onRefresh: _loadConversations,
+                      color: MineTheme.primaryTeal,
+                      child: ListView.builder(
                             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                             itemCount: filteredConvs.length,
                             itemBuilder: (context, index) {
@@ -541,7 +548,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Pair with a friend using a QR code or shareable invite code to start end-to-end encrypted chats.',
+              'Messages are end-to-end encrypted. Add contacts to start messaging.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: MineTheme.textMuted, height: 1.4),
             ),

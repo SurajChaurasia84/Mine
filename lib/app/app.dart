@@ -20,6 +20,7 @@ class MineApp extends StatefulWidget {
   final AppDatabase appDatabase;
   final ContactRepository contactRepository;
   final ChatRepository chatRepository;
+  final KeyPairBundle? initialIdentity;
 
   const MineApp({
     super.key,
@@ -28,6 +29,7 @@ class MineApp extends StatefulWidget {
     required this.appDatabase,
     required this.contactRepository,
     required this.chatRepository,
+    this.initialIdentity,
   });
 
   @override
@@ -36,7 +38,7 @@ class MineApp extends StatefulWidget {
 
 class _MineAppState extends State<MineApp> {
   KeyPairBundle? _identity;
-  bool _isCheckingIdentity = true;
+  bool _isCheckingIdentity = false;
 
   SignalingClient? _signalingClient;
   ConnectionManager? _connectionManager;
@@ -44,7 +46,14 @@ class _MineAppState extends State<MineApp> {
   @override
   void initState() {
     super.initState();
-    _checkExistingIdentity();
+    if (widget.initialIdentity != null) {
+      _identity = widget.initialIdentity;
+      _isCheckingIdentity = false;
+      _setupServices(widget.initialIdentity!);
+    } else {
+      _isCheckingIdentity = true;
+      _checkExistingIdentity();
+    }
   }
 
   Future<void> _checkExistingIdentity() async {

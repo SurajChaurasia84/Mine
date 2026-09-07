@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -18,6 +19,7 @@ import '../contacts/nickname_edit_dialog.dart';
 import 'widgets/chat_doodle_painter.dart';
 import 'widgets/chat_input_bar.dart';
 import 'widgets/ephemeral_media_viewer_screen.dart';
+import 'widgets/media_send_preview_screen.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/save_history_icon_button.dart';
 
@@ -263,6 +265,28 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
                 children: [
                   Expanded(
                     child: _buildMediaOption(
+                      icon: Icons.photo_library_rounded,
+                      label: 'Gallery\nPhoto',
+                      color: const Color(0xFF38BDF8),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _pickAndSendMedia(ImageSource.gallery, isVideo: false);
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildMediaOption(
+                      icon: Icons.video_library_rounded,
+                      label: 'Gallery\nVideo',
+                      color: const Color(0xFF4ADE80),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _pickAndSendMedia(ImageSource.gallery, isVideo: true);
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: _buildMediaOption(
                       icon: Icons.camera_alt_rounded,
                       label: 'Camera\nPhoto',
                       color: const Color(0xFFFF2D55),
@@ -283,25 +307,59 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
                       },
                     ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleCameraTap() async {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: MineTheme.surfaceDark,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
                   Expanded(
                     child: _buildMediaOption(
-                      icon: Icons.photo_library_rounded,
-                      label: 'Gallery\nPhoto',
-                      color: const Color(0xFF38BDF8),
+                      icon: Icons.photo_camera_rounded,
+                      label: 'Take\nPhoto',
+                      color: const Color(0xFFFF2D55),
                       onTap: () {
                         Navigator.pop(ctx);
-                        _pickAndSendMedia(ImageSource.gallery, isVideo: false);
+                        _pickAndSendMedia(ImageSource.camera, isVideo: false);
                       },
                     ),
                   ),
                   Expanded(
                     child: _buildMediaOption(
-                      icon: Icons.video_library_rounded,
-                      label: 'Gallery\nVideo',
-                      color: const Color(0xFF4ADE80),
+                      icon: Icons.videocam_rounded,
+                      label: 'Record\nVideo',
+                      color: const Color(0xFFA855F7),
                       onTap: () {
                         Navigator.pop(ctx);
-                        _pickAndSendMedia(ImageSource.gallery, isVideo: true);
+                        _pickAndSendMedia(ImageSource.camera, isVideo: true);
                       },
                     ),
                   ),
@@ -373,52 +431,74 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
       }
 
       if (file == null) return;
+      final rawBytes = await file.readAsBytes();
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              ),
-              const SizedBox(width: 12),
-              Text('Encrypting & sending ${isVideo ? 'video' : 'photo'}...'),
-            ],
+
+      // WhatsApp-style Media Preview with caption before sending
+      final previewResult = await Navigator.push<MediaSendResult>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MediaSendPreviewScreen(
+            rawBytes: rawBytes,
+            mediaType: isVideo ? 'video' : 'photo',
+            recipientName: _currentContact.nickname,
           ),
-          backgroundColor: MineTheme.surfaceDark,
-          duration: const Duration(seconds: 4),
         ),
       );
 
+      if (previewResult == null || !previewResult.shouldSend) return;
+      if (!mounted) return;
+
       final connManager = context.read<ConnectionManager>();
-      final rawBytes = await file.readAsBytes();
+      final tempMessageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${connManager.myIdentity.deviceId.hashCode.abs()}';
+
+      final pendingMsg = MessageModel(
+        id: tempMessageId,
+        conversationId: widget.conversation.id,
+        senderId: connManager.myIdentity.deviceId,
+        ciphertext: '',
+        timestamp: DateTime.now(),
+        status: MessageStatus.pending,
+        messageType: isVideo ? MessageType.video : MessageType.image,
+        viewCount: 0,
+        isExpired: false,
+        decryptedContent: jsonEncode({
+          'type': 'ephemeral_media',
+          'mediaType': isVideo ? 'video' : 'photo',
+          'caption': previewResult.caption,
+        }),
+      );
+
+      if (mounted) {
+        setState(() {
+          _messages.add(pendingMsg);
+        });
+        _scrollToBottom(animate: true);
+      }
 
       final sentMsg = await connManager.sendEphemeralMedia(
         contact: _currentContact,
         conversation: widget.conversation,
         rawBytes: rawBytes,
         mediaType: isVideo ? 'video' : 'photo',
+        caption: previewResult.caption.isNotEmpty ? previewResult.caption : null,
         saveHistory: _saveHistory,
       );
 
       if (mounted) {
         setState(() {
-          _messages.add(sentMsg);
+          final idx = _messages.indexWhere((m) => m.id == tempMessageId || m.id == sentMsg.id);
+          if (idx != -1) {
+            _messages[idx] = sentMsg;
+          } else {
+            _messages.add(sentMsg);
+          }
         });
         _scrollToBottom(animate: true);
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send media: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
+      // On error, the pending message will show failed status without popup snackbars
     }
   }
 
@@ -515,6 +595,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
           rawBytes: rawBytes,
           mediaType: payload.mediaType,
           senderName: isMe ? 'You' : _currentContact.nickname,
+          caption: payload.caption,
         ),
       ),
     );
@@ -739,14 +820,30 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
                                 if (index == 0) {
                                   return _buildEncryptionNote();
                                 }
-                                final msg = _messages[index - 1];
+                                final msgIndex = index - 1;
+                                final msg = _messages[msgIndex];
                                 final isMe = msg.senderId != _currentContact.peerDeviceId;
-                                return MessageBubble(
+                                final bool showDateBadge = msgIndex == 0 ||
+                                    _isDifferentDay(_messages[msgIndex - 1].timestamp, msg.timestamp);
+
+                                final bubble = MessageBubble(
                                   message: msg,
                                   isMe: isMe,
                                   onDelete: () => _deleteMessage(msg),
                                   onOpenEphemeral: _handleOpenEphemeral,
                                 );
+
+                                if (showDateBadge) {
+                                  return Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _buildDateBadge(msg.timestamp),
+                                      bubble,
+                                    ],
+                                  );
+                                }
+
+                                return bubble;
                               },
                             ),
                 ),
@@ -757,6 +854,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
                 key: _inputKey,
                 onSend: _handleSendMessage,
                 onAttach: _handleAttachMedia,
+                onCamera: _handleCameraTap,
                 onTap: () => _scrollToBottom(animate: true),
               ),
             ],
@@ -766,62 +864,62 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     );
   }
 
-  Widget _buildEncryptionNote() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Center(
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF182229).withAlpha(220),
-              borderRadius: BorderRadius.circular(10),
+  bool _isDifferentDay(DateTime d1, DateTime d2) {
+    return d1.year != d2.year || d1.month != d2.month || d1.day != d2.day;
+  }
+
+  Widget _buildDateBadge(DateTime dateTime) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.only(top: 8, bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFF182229),
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(25),
+              blurRadius: 2,
+              offset: const Offset(0, 1),
             ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.lock_rounded, size: 13, color: Color(0xFFFFD279)),
-                SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    'Messages are end-to-end encrypted. No one outside of this chat can read them.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 11, color: Color(0xFFFFD279)),
-                  ),
-                ),
-              ],
-            ),
+          ],
+        ),
+        child: Text(
+          DateFormatter.formatConversationDate(dateTime),
+          style: const TextStyle(
+            color: MineTheme.textMuted,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w500,
           ),
         ),
-        Center(
-          child: Container(
-            margin: const EdgeInsets.only(top: 4, bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-            decoration: BoxDecoration(
-              color: const Color(0xFF182229),
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withAlpha(25),
-                  blurRadius: 2,
-                  offset: const Offset(0, 1),
-                ),
-              ],
-            ),
-            child: Text(
-              _messages.isNotEmpty
-                  ? DateFormatter.formatConversationDate(_messages.first.timestamp)
-                  : DateFormatter.formatConversationDate(DateTime.now()),
-              style: const TextStyle(
-                color: MineTheme.textMuted,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w500,
+      ),
+    );
+  }
+
+  Widget _buildEncryptionNote() {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF182229).withAlpha(220),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.lock_rounded, size: 13, color: Color(0xFFFFD279)),
+            SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Messages are end-to-end encrypted. No one outside of this chat can read them.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Color(0xFFFFD279)),
               ),
             ),
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }

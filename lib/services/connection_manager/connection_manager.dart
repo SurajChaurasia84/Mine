@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import '../../core/crypto/crypto_service.dart';
 import '../../core/crypto/key_pair_bundle.dart';
@@ -52,6 +53,9 @@ class ConnectionManager extends ChangeNotifier {
   Stream<String> get onReadReceipt => _readReceiptStreamController.stream;
   Stream<({String peerDeviceId, bool saveHistory})> get onHistoryToggleReceived => _historyToggleController.stream;
 
+  String? _myDisplayName;
+  String? get myDisplayName => _myDisplayName;
+
   ConnectionManager({
     required this.myIdentity,
     required this.cryptoService,
@@ -64,7 +68,17 @@ class ConnectionManager extends ChangeNotifier {
     _init();
   }
 
+  void updateMyDisplayName(String name) {
+    _myDisplayName = name.trim();
+    secureKeyStore?.setDisplayName(name.trim());
+    notifyListeners();
+  }
+
   void _init() {
+    secureKeyStore?.getDisplayName().then((name) {
+      _myDisplayName = name;
+    });
+
     // 1. Listen for incoming zero-knowledge encrypted envelopes
     _envelopeSub = signalingClient.onEnvelopeReceived.listen(_handleIncomingEnvelope);
 
@@ -260,9 +274,17 @@ class ConnectionManager extends ChangeNotifier {
     // Derive or retrieve shared session key
     final sessionKey = await _getOrDeriveSessionKey(contact);
 
+    // Pack text and senderName inside AES-256-GCM encrypted payload
+    final payloadMap = {
+      'type': 'text_msg',
+      'text': text,
+      if (_myDisplayName != null && _myDisplayName!.isNotEmpty) 'sender_name': _myDisplayName,
+    };
+    final plaintextJson = jsonEncode(payloadMap);
+
     // Encrypt into ciphertext JSON (n, c, m)
     final ciphertext = await cryptoService.encryptMessage(
-      plaintext: text,
+      plaintext: plaintextJson,
       sessionKeyBytes: sessionKey,
     );
 
@@ -330,11 +352,12 @@ class ConnectionManager extends ChangeNotifier {
     final messageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${myIdentity.deviceId.hashCode.abs()}';
     final now = DateTime.now();
 
-    // 1. Encrypt and upload payload
+    // 1. Encrypt and upload payload (senderName is encrypted inside media payload)
     final mediaPayload = await ephemeralMediaService.encryptAndUpload(
       rawBytes: rawBytes,
       mediaType: mediaType,
       caption: caption,
+      senderName: _myDisplayName,
     );
     final payloadJson = mediaPayload.toJson();
 
@@ -428,6 +451,7 @@ class ConnectionManager extends ChangeNotifier {
                 type: 'message',
                 payload: msg.ciphertext,
                 messageId: msg.id,
+                senderName: _myDisplayName,
                 senderDhPublicKey: myIdentity.dhPublicKeyHex,
                 senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
                 timestamp: msg.timestamp,
@@ -564,19 +588,7 @@ class ConnectionManager extends ChangeNotifier {
     }
 
     if (envelope.type == 'read_receipt') {
-      final Set<String> msgIds = {};
-      if (envelope.messageId != null && envelope.messageId!.isNotEmpty) {
-        msgIds.add(envelope.messageId!.trim());
-      }
-      if (envelope.payload.isNotEmpty) {
-        final parts = envelope.payload.split(',');
-        for (final p in parts) {
-          final cleaned = p.replaceAll(RegExp(r'[^\w-]'), '').trim();
-          if (cleaned.isNotEmpty) msgIds.add(cleaned);
-        }
-      }
-
-      debugPrint('[ConnectionManager] Received read receipt for: $msgIds from ${envelope.from}');
+      final msgIds = envelope.payload.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
       for (final id in msgIds) {
         await chatRepository.updateMessageStatus(id, MessageStatus.read);
         _readReceiptStreamController.add(id);
@@ -627,9 +639,33 @@ class ConnectionManager extends ChangeNotifier {
       }
 
       MessageType msgType = MessageType.text;
+      String? senderNameFromEncryptedPayload;
+      String displayContent = decryptedText;
+
       final ephemeralPayload = EphemeralMediaPayload.tryParse(decryptedText);
       if (ephemeralPayload != null) {
         msgType = ephemeralPayload.mediaType == 'video' ? MessageType.video : MessageType.image;
+        senderNameFromEncryptedPayload = ephemeralPayload.senderName;
+      } else {
+        try {
+          final map = jsonDecode(decryptedText);
+          if (map is Map<String, dynamic> && map.containsKey('text')) {
+            displayContent = map['text'] as String? ?? '';
+            senderNameFromEncryptedPayload = (map['sender_name'] ?? map['senderName']) as String?;
+          }
+        } catch (_) {
+          // Plaintext string fallback
+        }
+      }
+
+      // If sender included their name in the E2EE payload, assign/update placeholder nickname
+      if (senderNameFromEncryptedPayload != null && senderNameFromEncryptedPayload.trim().isNotEmpty) {
+        final newName = senderNameFromEncryptedPayload.trim();
+        if (contact.nickname.startsWith('User ') || contact.nickname.startsWith('Contact (') || contact.nickname.toUpperCase() == contact.peerDeviceId.toUpperCase()) {
+          await contactRepository.updateNickname(contactId: contact.id, newNickname: newName);
+          contact = contact.copyWith(nickname: newName);
+          notifyListeners();
+        }
       }
 
       final incomingMessage = MessageModel(
@@ -642,7 +678,7 @@ class ConnectionManager extends ChangeNotifier {
         messageType: msgType,
         viewCount: 0,
         isExpired: false,
-        decryptedContent: decryptedText,
+        decryptedContent: displayContent,
       );
 
       final bool shouldSave = envelope.saveHistory == true;
@@ -690,8 +726,15 @@ class ConnectionManager extends ChangeNotifier {
         encryptedJson: message.ciphertext,
         sessionKeyBytes: sessionKey,
       );
-      message.decryptedContent = decrypted;
-      return decrypted;
+      String actualText = decrypted;
+      try {
+        final map = jsonDecode(decrypted);
+        if (map is Map<String, dynamic> && map.containsKey('text')) {
+          actualText = map['text'] as String? ?? '';
+        }
+      } catch (_) {}
+      message.decryptedContent = actualText;
+      return actualText;
     } catch (_) {
       return '[Unable to decrypt]';
     }

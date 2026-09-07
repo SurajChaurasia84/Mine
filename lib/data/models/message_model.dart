@@ -11,6 +11,7 @@ enum MessageType {
   image,
   video,
   file,
+  system,
 }
 
 /// Represents an end-to-end encrypted message record.

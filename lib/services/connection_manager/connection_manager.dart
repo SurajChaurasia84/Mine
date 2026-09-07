@@ -71,7 +71,167 @@ class ConnectionManager extends ChangeNotifier {
   void updateMyDisplayName(String name) {
     _myDisplayName = name.trim();
     secureKeyStore?.setDisplayName(name.trim());
+    publishEncryptedDirectoryCard();
     notifyListeners();
+  }
+
+  /// Encrypts and publishes our contact directory card on the broker with retain=true
+  Future<void> publishEncryptedDirectoryCard() async {
+    try {
+      final passcode = await secureKeyStore?.getOrGeneratePasscode();
+      if (passcode == null || passcode.isEmpty) return;
+
+      final cardPayload = jsonEncode({
+        'deviceId': myIdentity.deviceId,
+        'ik': myIdentity.identityPublicKeyHex,
+        'dh': myIdentity.dhPublicKeyHex,
+        'name': _myDisplayName ?? '',
+      });
+
+      final encrypted = await cryptoService.encryptWithPasscode(
+        plaintext: cardPayload,
+        deviceId: myIdentity.deviceId,
+        passcode: passcode,
+      );
+
+      signalingClient.publishDirectoryCard(
+        deviceId: myIdentity.deviceId,
+        encryptedPayload: encrypted,
+      );
+      debugPrint('[ConnectionManager] Published encrypted directory card for ${myIdentity.deviceId}');
+    } catch (e) {
+      debugPrint('[ConnectionManager] Error publishing directory card: $e');
+    }
+  }
+
+  /// Resolves peer keys with passcode using both retained encrypted directory card (instant) and live handshake
+  Future<Map<String, String>?> resolvePeerKeysWithPasscode(
+    String targetDeviceId, {
+    required String passcode,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final normalized = targetDeviceId.trim().toUpperCase();
+    final cleanPasscode = passcode.trim();
+
+    // 1. Ensure signaling is connected
+    if (signalingClient.state != SignalingServerState.connected) {
+      signalingClient.connect();
+      try {
+        await signalingClient.onStateChanged
+            .firstWhere((s) => s == SignalingServerState.connected)
+            .timeout(const Duration(seconds: 4));
+      } catch (_) {}
+    }
+
+    // 2. Subscribe to directory card & presence
+    signalingClient.checkPeerStatus(normalized);
+    signalingClient.subscribeToDirectory(normalized);
+
+    // 3. Send live key_request
+    try {
+      signalingClient.sendEnvelope(SignalingEnvelope(
+        to: normalized,
+        from: myIdentity.deviceId,
+        type: 'key_request',
+        senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
+        senderDhPublicKey: myIdentity.dhPublicKeyHex,
+        timestamp: DateTime.now(),
+        payload: cleanPasscode,
+      ));
+    } catch (_) {}
+
+    final completer = Completer<Map<String, String>?>();
+    StreamSubscription? rawDirSub;
+    StreamSubscription? envSub;
+    Timer? timeoutTimer;
+
+    void finish(Map<String, String>? result, [Object? error]) {
+      if (!completer.isCompleted) {
+        timeoutTimer?.cancel();
+        rawDirSub?.cancel();
+        envSub?.cancel();
+        if (error != null) {
+          completer.completeError(error);
+        } else {
+          completer.complete(result);
+        }
+      }
+    }
+
+    // 4. Listen for retained/published directory card
+    rawDirSub = signalingClient.onRawDirectoryReceived.listen((map) async {
+      if (map['targetId'] == normalized) {
+        final encPayload = map['encryptedPayload'];
+        if (encPayload != null && encPayload.isNotEmpty) {
+          try {
+            final decryptedJson = await cryptoService.decryptWithPasscode(
+              encryptedJson: encPayload,
+              deviceId: normalized,
+              passcode: cleanPasscode,
+            );
+            final cardMap = jsonDecode(decryptedJson) as Map<String, dynamic>;
+            final ik = cardMap['ik']?.toString();
+            final dh = cardMap['dh']?.toString();
+            final name = cardMap['name']?.toString();
+            if (ik != null && dh != null) {
+              signalingClient.recordPeerKeys(
+                peerDeviceId: normalized,
+                ik: ik,
+                dh: dh,
+              );
+              final res = <String, String>{
+                'deviceId': normalized,
+                'ik': ik,
+                'dh': dh,
+              };
+              if (name != null && name.trim().isNotEmpty) {
+                res['name'] = name.trim();
+              }
+              debugPrint('[ConnectionManager] Instantly resolved peer card for $normalized via directory');
+              finish(res);
+            }
+          } catch (e) {
+            debugPrint('[ConnectionManager] Directory card decryption failed: $e');
+            finish(null, const FormatException('INCORRECT_PASSCODE'));
+          }
+        }
+      }
+    });
+
+    // 5. Listen for live key_response / key_rejected
+    envSub = signalingClient.onEnvelopeReceived.listen((env) {
+      if (env.from.trim().toUpperCase() == normalized) {
+        if (env.type == 'key_rejected') {
+          finish(null, const FormatException('INCORRECT_PASSCODE'));
+        } else if (env.type == 'key_response' &&
+            env.senderIdentityPublicKey != null &&
+            env.senderDhPublicKey != null) {
+          signalingClient.recordPeerKeys(
+            peerDeviceId: normalized,
+            ik: env.senderIdentityPublicKey!,
+            dh: env.senderDhPublicKey!,
+          );
+          final peerName = (env.payload.trim().isNotEmpty && env.payload.trim() != 'key_response')
+              ? env.payload.trim()
+              : null;
+          final res = <String, String>{
+            'deviceId': normalized,
+            'ik': env.senderIdentityPublicKey!,
+            'dh': env.senderDhPublicKey!,
+          };
+          if (peerName != null && peerName.isNotEmpty) {
+            res['name'] = peerName;
+          }
+          finish(res);
+        }
+      }
+    });
+
+    timeoutTimer = Timer(timeout, () {
+      finish(null);
+    });
+
+    return completer.future;
   }
 
   void _init() {
@@ -85,6 +245,7 @@ class ConnectionManager extends ChangeNotifier {
     // 2. Listen for signaling server connectivity changes
     _signalingStateSub = signalingClient.onStateChanged.listen((state) {
       if (state == SignalingServerState.connected) {
+        publishEncryptedDirectoryCard();
         _checkAllPeersStatus();
         flushOutbox();
         flushPendingReadReceipts();
@@ -303,9 +464,11 @@ class ConnectionManager extends ChangeNotifier {
       decryptedContent: text,
     );
 
-    // Save strictly ciphertext in local database ONLY when saveHistory is true
+    // Save strictly ciphertext in local database ONLY when saveHistory is true; otherwise keep in transient session memory
     if (saveHistory) {
       await chatRepository.saveMessage(message);
+    } else {
+      chatRepository.addTransientMessage(message);
     }
     notifyListeners();
 
@@ -326,9 +489,7 @@ class ConnectionManager extends ChangeNotifier {
         signalingClient.sendEnvelope(envelope);
 
         // Successfully dispatched from sender device to signaling network -> Sent (Single tick)
-        if (saveHistory) {
-          await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
-        }
+        await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
         final sentMessage = message.copyWith(status: MessageStatus.sent);
         notifyListeners();
         return sentMessage;
@@ -385,6 +546,8 @@ class ConnectionManager extends ChangeNotifier {
 
     if (saveHistory) {
       await chatRepository.saveMessage(message);
+    } else {
+      chatRepository.addTransientMessage(message);
     }
     notifyListeners();
 
@@ -404,9 +567,7 @@ class ConnectionManager extends ChangeNotifier {
         );
         signalingClient.sendEnvelope(envelope);
 
-        if (saveHistory) {
-          await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
-        }
+        await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
         final sentMessage = message.copyWith(status: MessageStatus.sent);
         notifyListeners();
         return sentMessage;
@@ -684,6 +845,8 @@ class ConnectionManager extends ChangeNotifier {
       final bool shouldSave = envelope.saveHistory == true;
       if (shouldSave) {
         await chatRepository.saveMessage(incomingMessage);
+      } else {
+        chatRepository.addTransientMessage(incomingMessage);
       }
 
       // Send back a delivery receipt

@@ -146,7 +146,7 @@ class _QrDisplayScreenState extends State<QrDisplayScreen> {
                 } catch (e) {
                   // Fallback to clipboard if native share fails or unsupported
                   await Clipboard.setData(ClipboardData(text: invitePayload));
-                  if (!mounted) return;
+                  if (!context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Invite link copied to clipboard!'),

@@ -137,6 +137,21 @@ class ChatRepository {
     );
   }
 
+  /// Updates ephemeral view count and expired status of a message
+  Future<void> updateMessageViewCount(String messageId, int viewCount) async {
+    final db = await appDatabase.database;
+    final isExpired = viewCount >= 2 ? 1 : 0;
+    await db.update(
+      'messages',
+      {
+        'view_count': viewCount,
+        'is_expired': isExpired,
+      },
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
   /// Retrieves messages for a conversation ordered chronologically
   Future<List<MessageModel>> getMessages(String conversationId) async {
     final db = await appDatabase.database;

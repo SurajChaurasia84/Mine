@@ -22,6 +22,37 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final displayContent = message.decryptedContent ?? '[Encrypted Payload]';
+
+    if (message.messageType == MessageType.system) {
+      return Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF182229),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(25),
+                blurRadius: 2,
+                offset: const Offset(0, 1),
+              ),
+            ],
+          ),
+          child: Text(
+            displayContent,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: MineTheme.textMuted,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      );
+    }
+
     final bubbleColor = isMe ? MineTheme.outgoingBubble : MineTheme.incomingBubble;
     final borderRadius = BorderRadius.only(
       topLeft: const Radius.circular(12),
@@ -30,7 +61,6 @@ class MessageBubble extends StatelessWidget {
       bottomRight: isMe ? const Radius.circular(2) : const Radius.circular(12),
     );
 
-    final displayContent = message.decryptedContent ?? '[Encrypted Payload]';
     final is24 = DateFormatter.is24HourFormat(context);
     final timeSpacerWidth = isMe ? (is24 ? 58.0 : 70.0) : (is24 ? 42.0 : 50.0);
     final isEphemeral = message.messageType == MessageType.image || message.messageType == MessageType.video;

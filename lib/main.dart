@@ -28,6 +28,9 @@ void main() async {
   final contactRepository = ContactRepository(appDatabase: appDatabase);
   final chatRepository = ChatRepository(appDatabase: appDatabase);
 
+  // Pre-fetch identity for instant launch without loading spinner
+  final initialIdentity = await secureKeyStore.getIdentity();
+
   runApp(
     MineApp(
       secureKeyStore: secureKeyStore,
@@ -35,6 +38,7 @@ void main() async {
       appDatabase: appDatabase,
       contactRepository: contactRepository,
       chatRepository: chatRepository,
+      initialIdentity: initialIdentity,
     ),
   );
 }

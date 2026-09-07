@@ -63,8 +63,9 @@ class ConnectionManager extends ChangeNotifier {
     required this.chatRepository,
     required this.signalingClient,
     this.secureKeyStore,
+    String? initialDisplayName,
     this.enablePeriodicFlush = true,
-  }) {
+  }) : _myDisplayName = initialDisplayName {
     _init();
   }
 
@@ -236,7 +237,10 @@ class ConnectionManager extends ChangeNotifier {
 
   void _init() {
     secureKeyStore?.getDisplayName().then((name) {
-      _myDisplayName = name;
+      if (name != null && name.trim().isNotEmpty && name.trim() != _myDisplayName) {
+        _myDisplayName = name.trim();
+        notifyListeners();
+      }
     });
 
     // 1. Listen for incoming zero-knowledge encrypted envelopes

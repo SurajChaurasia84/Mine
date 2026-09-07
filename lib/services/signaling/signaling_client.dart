@@ -31,15 +31,17 @@ class SignalingClient extends ChangeNotifier {
   final _stateController = StreamController<SignalingServerState>.broadcast();
   final _peerStatusController = StreamController<Map<String, String>>.broadcast();
   final _directoryController = StreamController<Map<String, String>>.broadcast();
+  final _rawDirectoryController = StreamController<Map<String, String>>.broadcast();
   final Map<String, Map<String, String>> _directoryCache = {};
 
   Stream<SignalingEnvelope> get onEnvelopeReceived => _envelopeController.stream;
   Stream<SignalingServerState> get onStateChanged => _stateController.stream;
   Stream<Map<String, String>> get onPeerStatusChanged => _peerStatusController.stream;
   Stream<Map<String, String>> get onDirectoryResolved => _directoryController.stream;
+  Stream<Map<String, String>> get onRawDirectoryReceived => _rawDirectoryController.stream;
   SignalingServerState get state => _state;
 
-  static const String defaultBroker = 'broker.hivemq.com';
+  static const String defaultBroker = 'broker.emqx.io';
 
   SignalingClient({
     required String deviceId,
@@ -144,7 +146,7 @@ class SignalingClient extends ChangeNotifier {
         'deviceId': deviceId,
         'timestamp': DateTime.now().toIso8601String(),
       };
-      builder.addString(jsonEncode(map));
+      builder.addUTF8String(jsonEncode(map));
       _client?.publishMessage(
         'mine/v1/presence/$deviceId',
         MqttQos.atLeastOnce,
@@ -169,11 +171,26 @@ class SignalingClient extends ChangeNotifier {
     return _directoryCache[peerDeviceId.trim().toUpperCase()];
   }
 
+  static String _decodePayload(MqttPublishMessage msg) {
+    try {
+      final bytes = msg.payload.message;
+      if (bytes.isEmpty) return '';
+      return utf8.decode(bytes, allowMalformed: true).trim();
+    } catch (_) {
+      try {
+        return MqttPublishPayload.bytesToStringAsString(msg.payload.message).trim();
+      } catch (_) {
+        return '';
+      }
+    }
+  }
+
   void _handleIncomingUpdates(List<MqttReceivedMessage<MqttMessage>> messages) {
     for (final received in messages) {
       final topic = received.topic;
       final msg = received.payload as MqttPublishMessage;
-      final payloadString = MqttPublishPayload.bytesToStringAsString(msg.payload.message);
+      final payloadString = _decodePayload(msg);
+      if (payloadString.isEmpty) continue;
 
       if (topic == 'mine/v1/inbox/$deviceId') {
         try {
@@ -184,7 +201,7 @@ class SignalingClient extends ChangeNotifier {
           }
           _envelopeController.add(envelope);
         } catch (e) {
-          debugPrint('[SignalingClient] Error parsing envelope: $e');
+          debugPrint('[SignalingClient] Error parsing envelope (payload: "$payloadString"): $e');
         }
       } else if (topic.startsWith('mine/v1/presence/')) {
         try {
@@ -196,8 +213,44 @@ class SignalingClient extends ChangeNotifier {
             'status': status,
           });
         } catch (_) {}
+      } else if (topic.startsWith('mine/v1/directory/')) {
+        final targetId = topic.replaceFirst('mine/v1/directory/', '').trim().toUpperCase();
+        debugPrint('[SignalingClient] Received directory card for $targetId');
+        _rawDirectoryController.add({
+          'targetId': targetId,
+          'encryptedPayload': payloadString,
+        });
       }
     }
+  }
+
+  void publishDirectoryCard({
+    required String deviceId,
+    required String encryptedPayload,
+  }) {
+    if (_client == null || _state != SignalingServerState.connected) return;
+    try {
+      final upper = deviceId.trim().toUpperCase();
+      final builder = MqttClientPayloadBuilder();
+      builder.addUTF8String(encryptedPayload);
+      _client?.publishMessage(
+        'mine/v1/directory/$upper',
+        MqttQos.atLeastOnce,
+        builder.payload!,
+        retain: true,
+      );
+      debugPrint('[SignalingClient] Published retained directory card to mine/v1/directory/$upper');
+    } catch (e) {
+      debugPrint('[SignalingClient] Error publishing directory card: $e');
+    }
+  }
+
+  void subscribeToDirectory(String targetDeviceId) {
+    final upper = targetDeviceId.trim().toUpperCase();
+    if (_state != SignalingServerState.connected || _client == null) return;
+    try {
+      _client?.subscribe('mine/v1/directory/$upper', MqttQos.atLeastOnce);
+    } catch (_) {}
   }
 
   void checkPeerStatus(String targetDeviceId) {
@@ -281,7 +334,7 @@ class SignalingClient extends ChangeNotifier {
       throw StateError('Relay client is not connected');
     }
     final builder = MqttClientPayloadBuilder();
-    builder.addString(envelope.toJsonString());
+    builder.addUTF8String(envelope.toJsonString());
     if (envelope.type != 'ping' && envelope.type != 'pong') {
       debugPrint('[SignalingClient] Publishing envelope to mine/v1/inbox/${envelope.to} (type: ${envelope.type})');
     }
@@ -340,6 +393,7 @@ class SignalingClient extends ChangeNotifier {
     _stateController.close();
     _peerStatusController.close();
     _directoryController.close();
+    _rawDirectoryController.close();
     super.dispose();
   }
 }

@@ -5,6 +5,7 @@ import '../../app/theme.dart';
 import '../../core/crypto/key_pair_bundle.dart';
 import '../../core/storage/app_database.dart';
 import '../../core/storage/secure_key_store.dart';
+import '../../services/connection_manager/connection_manager.dart';
 
 class SettingsScreen extends StatefulWidget {
   final KeyPairBundle identity;
@@ -17,20 +18,99 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   String _passcode = '';
+  String _displayName = '';
   bool _showPasscode = false;
 
   @override
   void initState() {
     super.initState();
-    _loadPasscode();
+    _loadUserData();
   }
 
-  Future<void> _loadPasscode() async {
+  Future<void> _loadUserData() async {
     final keyStore = context.read<SecureKeyStore>();
     final code = await keyStore.getOrGeneratePasscode();
+    final name = await keyStore.getDisplayName();
     if (mounted) {
-      setState(() => _passcode = code);
+      setState(() {
+        _passcode = code;
+        _displayName = name ?? '';
+      });
     }
+  }
+
+  void _showEditNameDialog() {
+    final controller = TextEditingController(text: _displayName);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MineTheme.surfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.edit_rounded, color: MineTheme.primaryTeal),
+            SizedBox(width: 10),
+            Text('Edit Your Name', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'This name will be shown to people you chat with.',
+              style: TextStyle(fontSize: 13, color: MineTheme.textMuted),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              textCapitalization: TextCapitalization.words,
+              autofocus: true,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Enter your name',
+                hintStyle: const TextStyle(color: MineTheme.textMuted),
+                filled: true,
+                fillColor: MineTheme.backgroundDark,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                prefixIcon: const Icon(Icons.person_outline_rounded, size: 20, color: MineTheme.primaryTeal),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: MineTheme.textMuted)),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: MineTheme.primaryTeal,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isNotEmpty) {
+                final keyStore = context.read<SecureKeyStore>();
+                await keyStore.setDisplayName(newName);
+                if (mounted) {
+                  try {
+                    context.read<ConnectionManager>().updateMyDisplayName(newName);
+                  } catch (_) {}
+                  setState(() => _displayName = newName);
+                }
+              }
+              if (ctx.mounted) {
+                Navigator.pop(ctx);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showChangePasscodeDialog() {
@@ -208,22 +288,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
                   child: const Icon(
-                    Icons.fingerprint_rounded,
+                    Icons.person_rounded,
                     size: 46,
                     color: Colors.white,
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
+
+                // Profile Name with Edit Button
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: _showEditNameDialog,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _displayName.isNotEmpty ? _displayName : 'Set Your Name',
+                          style: TextStyle(
+                            fontSize: 21,
+                            fontWeight: FontWeight.bold,
+                            color: _displayName.isNotEmpty ? MineTheme.textLight : MineTheme.textMuted,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.edit_rounded, size: 16, color: MineTheme.primaryTeal),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 4),
+
+                // Device / User ID
                 SelectableText(
                   widget.identity.deviceId,
                   style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: MineTheme.textLight,
-                    letterSpacing: 0.8,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: MineTheme.accentGreen,
+                    letterSpacing: 0.6,
                   ),
                 ),
+
                 const SizedBox(height: 8),
+
+                // Copy User ID Chip
                 InkWell(
                   borderRadius: BorderRadius.circular(20),
                   onTap: () {
@@ -244,12 +356,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.copy_rounded, size: 14, color: MineTheme.accentGreen),
+                        Icon(Icons.copy_rounded, size: 13, color: MineTheme.accentGreen),
                         SizedBox(width: 6),
                         Text(
                           'Copy User ID',
                           style: TextStyle(
-                            fontSize: 12.5,
+                            fontSize: 12,
                             color: MineTheme.accentGreen,
                             fontWeight: FontWeight.w600,
                           ),
@@ -262,7 +374,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
 
-          const SizedBox(height: 36),
+          const SizedBox(height: 32),
 
           // 2. Settings Items (Seamless, unified list style)
           const Padding(

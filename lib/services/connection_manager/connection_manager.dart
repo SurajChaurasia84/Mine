@@ -8,6 +8,7 @@ import '../../data/models/conversation_model.dart';
 import '../../data/models/message_model.dart';
 import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/contact_repository.dart';
+import '../media/ephemeral_media_service.dart';
 import '../signaling/signaling_client.dart';
 import '../signaling/signaling_message.dart';
 import 'peer_connection_state.dart';
@@ -25,6 +26,7 @@ class ConnectionManager extends ChangeNotifier {
   final ChatRepository chatRepository;
   final SignalingClient signalingClient;
   final SecureKeyStore? secureKeyStore;
+  final EphemeralMediaService ephemeralMediaService = EphemeralMediaService();
 
   // Track real-time connectivity status per peer device ID
   final Map<String, PeerConnectionState> _peerStates = {};
@@ -290,6 +292,80 @@ class ConnectionManager extends ChangeNotifier {
     return message;
   }
 
+  /// Sends a zero-storage Snapchat-style ephemeral photo or video
+  Future<MessageModel> sendEphemeralMedia({
+    required ContactModel contact,
+    required ConversationModel conversation,
+    required Uint8List rawBytes,
+    required String mediaType, // 'photo' | 'video'
+  }) async {
+    final messageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${myIdentity.deviceId.hashCode.abs()}';
+    final now = DateTime.now();
+
+    // 1. Encrypt and upload payload
+    final mediaPayload = await ephemeralMediaService.encryptAndUpload(
+      rawBytes: rawBytes,
+      mediaType: mediaType,
+    );
+    final payloadJson = mediaPayload.toJson();
+
+    // 2. Encrypt metadata payload with Peer's E2EE session key
+    final sessionKey = await _getOrDeriveSessionKey(contact);
+    final ciphertext = await cryptoService.encryptMessage(
+      plaintext: payloadJson,
+      sessionKeyBytes: sessionKey,
+    );
+
+    final msgType = mediaType == 'video' ? MessageType.video : MessageType.image;
+
+    final message = MessageModel(
+      id: messageId,
+      conversationId: conversation.id,
+      senderId: myIdentity.deviceId,
+      ciphertext: ciphertext,
+      timestamp: now,
+      status: MessageStatus.pending,
+      messageType: msgType,
+      viewCount: 0,
+      isExpired: false,
+      decryptedContent: payloadJson,
+    );
+
+    await chatRepository.saveMessage(message);
+    notifyListeners();
+
+    // Attempt delivery via signaling
+    if (signalingClient.state == SignalingServerState.connected) {
+      try {
+        final envelope = SignalingEnvelope(
+          to: contact.peerDeviceId,
+          from: myIdentity.deviceId,
+          type: 'message',
+          payload: ciphertext,
+          messageId: messageId,
+          senderDhPublicKey: myIdentity.dhPublicKeyHex,
+          senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
+          timestamp: now,
+        );
+        signalingClient.sendEnvelope(envelope);
+
+        await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
+        final sentMessage = message.copyWith(status: MessageStatus.sent);
+        notifyListeners();
+        return sentMessage;
+      } catch (_) {}
+    }
+
+    return message;
+  }
+
+  /// Marks an ephemeral media message as viewed, incrementing viewCount and updating expiry
+  Future<void> markEphemeralMessageViewed(MessageModel message) async {
+    final newCount = message.viewCount + 1;
+    await chatRepository.updateMessageViewCount(message.id, newCount);
+    notifyListeners();
+  }
+
   /// Delivers pending outbox messages for all online peers
   Future<void> flushOutbox() async {
     flushPendingReadReceipts();
@@ -509,6 +585,12 @@ class ConnectionManager extends ChangeNotifier {
         return;
       }
 
+      MessageType msgType = MessageType.text;
+      final ephemeralPayload = EphemeralMediaPayload.tryParse(decryptedText);
+      if (ephemeralPayload != null) {
+        msgType = ephemeralPayload.mediaType == 'video' ? MessageType.video : MessageType.image;
+      }
+
       final incomingMessage = MessageModel(
         id: envelope.messageId ?? 'recv_${DateTime.now().millisecondsSinceEpoch}',
         conversationId: conversation.id,
@@ -516,7 +598,9 @@ class ConnectionManager extends ChangeNotifier {
         ciphertext: envelope.payload,
         timestamp: envelope.timestamp,
         status: MessageStatus.delivered,
-        messageType: MessageType.text,
+        messageType: msgType,
+        viewCount: 0,
+        isExpired: false,
         decryptedContent: decryptedText,
       );
 

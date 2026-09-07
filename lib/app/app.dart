@@ -21,6 +21,7 @@ class MineApp extends StatefulWidget {
   final ContactRepository contactRepository;
   final ChatRepository chatRepository;
   final KeyPairBundle? initialIdentity;
+  final String? initialDisplayName;
 
   const MineApp({
     super.key,
@@ -30,6 +31,7 @@ class MineApp extends StatefulWidget {
     required this.contactRepository,
     required this.chatRepository,
     this.initialIdentity,
+    this.initialDisplayName,
   });
 
   @override
@@ -38,6 +40,7 @@ class MineApp extends StatefulWidget {
 
 class _MineAppState extends State<MineApp> {
   KeyPairBundle? _identity;
+  String? _displayName;
   bool _isCheckingIdentity = false;
 
   SignalingClient? _signalingClient;
@@ -46,6 +49,7 @@ class _MineAppState extends State<MineApp> {
   @override
   void initState() {
     super.initState();
+    _displayName = widget.initialDisplayName;
     if (widget.initialIdentity != null) {
       _identity = widget.initialIdentity;
       _isCheckingIdentity = false;
@@ -58,9 +62,12 @@ class _MineAppState extends State<MineApp> {
 
   Future<void> _checkExistingIdentity() async {
     KeyPairBundle? identity;
+    String? name;
     try {
       identity = await widget.secureKeyStore.getIdentity();
+      name = await widget.secureKeyStore.getDisplayName();
       if (identity != null) {
+        _displayName = name;
         _setupServices(identity);
       }
     } catch (e) {
@@ -69,6 +76,7 @@ class _MineAppState extends State<MineApp> {
       if (mounted) {
         setState(() {
           _identity = identity;
+          _displayName = name;
           _isCheckingIdentity = false;
         });
       }
@@ -92,6 +100,7 @@ class _MineAppState extends State<MineApp> {
         chatRepository: widget.chatRepository,
         signalingClient: _signalingClient!,
         secureKeyStore: widget.secureKeyStore,
+        initialDisplayName: _displayName,
       );
     } catch (e) {
       debugPrint('[MineApp] Error setting up services: $e');

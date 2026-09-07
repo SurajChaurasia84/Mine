@@ -37,7 +37,7 @@ class ChatConversationScreen extends StatefulWidget {
   State<ChatConversationScreen> createState() => _ChatConversationScreenState();
 }
 
-class _ChatConversationScreenState extends State<ChatConversationScreen> {
+class _ChatConversationScreenState extends State<ChatConversationScreen> with WidgetsBindingObserver {
   late ContactModel _currentContact;
   final List<MessageModel> _messages = [];
   late final ScrollController _scrollController = ScrollController(initialScrollOffset: 999999.0);
@@ -52,6 +52,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _currentContact = widget.contact;
     if (widget.initialMessages != null && widget.initialMessages!.isNotEmpty) {
       _messages.addAll(widget.initialMessages!);
@@ -152,7 +153,18 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   }
 
   @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _scrollToBottom(animate: false);
+      }
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _presenceTimer?.cancel();
     _messageSub?.cancel();
     _receiptSub?.cancel();
@@ -352,7 +364,12 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       if (isVideo) {
         file = await picker.pickVideo(source: source);
       } else {
-        file = await picker.pickImage(source: source, imageQuality: 85);
+        file = await picker.pickImage(
+          source: source,
+          imageQuality: 80,
+          maxWidth: 1280,
+          maxHeight: 1280,
+        );
       }
 
       if (file == null) return;
@@ -699,6 +716,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                   child: _messages.isEmpty
                       ? ListView(
                               controller: _scrollController,
+                              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               children: [
                                 _buildEncryptionNote(),
@@ -714,6 +732,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                             )
                           : ListView.builder(
                               controller: _scrollController,
+                              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                               itemCount: _messages.length + 1,
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               itemBuilder: (context, index) {
@@ -738,6 +757,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
                 key: _inputKey,
                 onSend: _handleSendMessage,
                 onAttach: _handleAttachMedia,
+                onTap: () => _scrollToBottom(animate: true),
               ),
             ],
           ),

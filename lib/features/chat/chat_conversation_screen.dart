@@ -667,9 +667,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
   Widget build(BuildContext context) {
     final connManager = context.watch<ConnectionManager>();
     final peerState = connManager.getPeerState(_currentContact.peerDeviceId);
-    final avatarColors = AvatarColors.forName(
-      _currentContact.nickname.isNotEmpty ? _currentContact.nickname : _currentContact.id,
-    );
 
     // Refresh messages on incoming message from connection manager
     return Scaffold(
@@ -680,17 +677,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         titleSpacing: 0,
         title: Row(
           children: [
-            CircleAvatar(
+            UserAvatar(
+              nameOrId: _currentContact.nickname.isNotEmpty ? _currentContact.nickname : _currentContact.id,
               radius: 19,
-              backgroundColor: avatarColors.background,
-              child: Text(
-                _currentContact.nickname.isNotEmpty ? _currentContact.nickname[0].toUpperCase() : '?',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: avatarColors.foreground,
-                  fontSize: 16,
-                ),
-              ),
             ),
             const SizedBox(width: 10),
             Expanded(

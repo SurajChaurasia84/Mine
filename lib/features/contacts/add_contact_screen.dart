@@ -208,6 +208,9 @@ class _AddContactScreenState extends State<AddContactScreen> {
               TextField(
                 controller: _codeController,
                 onChanged: (_) => _onInputChanged(),
+                inputFormatters: [
+                  UserIdInputFormatter(),
+                ],
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 1.0),
                 decoration: InputDecoration(
                   hintText: 'e.g. UU72-7FYQ-K6N5 or invite link',
@@ -373,6 +376,43 @@ class _AddContactScreenState extends State<AddContactScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class UserIdInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    // Don't format long invite URLs
+    if (text.contains('://') || text.startsWith('http') || text.length > 25) {
+      return newValue;
+    }
+
+    // Allow deleting smoothly
+    if (oldValue.text.length > newValue.text.length) {
+      return newValue;
+    }
+
+    // Clean non-alphanumeric/hyphen characters and convert to uppercase
+    final clean = text.replaceAll('-', '').toUpperCase();
+    final truncated = clean.length > 12 ? clean.substring(0, 12) : clean;
+
+    final buffer = StringBuffer();
+    for (int i = 0; i < truncated.length; i++) {
+      if (i > 0 && i % 4 == 0) {
+        buffer.write('-');
+      }
+      buffer.write(truncated[i]);
+    }
+
+    final res = buffer.toString();
+    return TextEditingValue(
+      text: res,
+      selection: TextSelection.collapsed(offset: res.length),
     );
   }
 }

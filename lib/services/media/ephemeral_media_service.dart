@@ -10,6 +10,7 @@ class EphemeralMediaPayload {
   final String mediaKeyBase64;
   final int size;
   final String? inlineCiphertext; // Optional fallback for fast local/offline delivery
+  final String? caption;
 
   EphemeralMediaPayload({
     required this.mediaType,
@@ -17,6 +18,7 @@ class EphemeralMediaPayload {
     required this.mediaKeyBase64,
     required this.size,
     this.inlineCiphertext,
+    this.caption,
   });
 
   Map<String, dynamic> toMap() {
@@ -27,6 +29,7 @@ class EphemeralMediaPayload {
       'key': mediaKeyBase64,
       'size': size,
       if (inlineCiphertext != null) 'data': inlineCiphertext,
+      if (caption != null && caption!.isNotEmpty) 'caption': caption,
     };
   }
 
@@ -37,6 +40,7 @@ class EphemeralMediaPayload {
       mediaKeyBase64: map['key'] as String? ?? '',
       size: (map['size'] as num?)?.toInt() ?? 0,
       inlineCiphertext: map['data'] as String?,
+      caption: map['caption'] as String?,
     );
   }
 
@@ -66,6 +70,7 @@ class EphemeralMediaService {
   Future<EphemeralMediaPayload> encryptAndUpload({
     required Uint8List rawBytes,
     required String mediaType, // 'photo' or 'video'
+    String? caption,
   }) async {
     final keyBytes = generateMediaKey();
     final secretKey = SecretKey(keyBytes);
@@ -112,6 +117,7 @@ class EphemeralMediaService {
       mediaKeyBase64: keyBase64,
       size: rawBytes.length,
       inlineCiphertext: inlineData,
+      caption: caption,
     );
   }
 

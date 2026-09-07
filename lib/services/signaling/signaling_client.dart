@@ -252,11 +252,18 @@ class SignalingClient extends ChangeNotifier {
           ik: env.senderIdentityPublicKey!,
           dh: env.senderDhPublicKey!,
         );
-        return {
+        final peerName = (env.payload.trim().isNotEmpty && env.payload.trim() != 'key_response')
+            ? env.payload.trim()
+            : null;
+        final result = <String, String>{
           'deviceId': normalized,
           'ik': env.senderIdentityPublicKey!,
           'dh': env.senderDhPublicKey!,
         };
+        if (peerName != null && peerName.isNotEmpty) {
+          result['name'] = peerName;
+        }
+        return result;
       }
 
       return null;

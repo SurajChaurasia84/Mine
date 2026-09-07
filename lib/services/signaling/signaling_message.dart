@@ -13,6 +13,7 @@ class SignalingEnvelope {
   final String type; // 'message', 'delivery_receipt', 'ping'
   final String payload; // Ciphertext
   final String? messageId;
+  final String? senderName;
   final String? senderDhPublicKey;
   final String? senderIdentityPublicKey;
   final bool? saveHistory;
@@ -24,6 +25,7 @@ class SignalingEnvelope {
     required this.type,
     required this.payload,
     this.messageId,
+    this.senderName,
     this.senderDhPublicKey,
     this.senderIdentityPublicKey,
     this.saveHistory,

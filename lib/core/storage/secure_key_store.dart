@@ -20,6 +20,9 @@ class SecureKeyStore {
   String? _cachedPasscode;
   String? _cachedDisplayName;
 
+  String? get cachedDisplayName => _cachedDisplayName;
+  String? get cachedPasscode => _cachedPasscode;
+
   SecureKeyStore({
     FlutterSecureStorage? storage,
     this.appDatabase,

@@ -134,27 +134,25 @@ class _QrDisplayScreenState extends State<QrDisplayScreen> {
             // Share Invite Code button
             FilledButton.icon(
               onPressed: () async {
+                final box = context.findRenderObject() as RenderBox?;
+                final origin = box != null ? box.localToGlobal(Offset.zero) & box.size : null;
                 try {
-                  final box = context.findRenderObject() as RenderBox?;
                   // ignore: deprecated_member_use
                   await Share.share(
                     invitePayload,
                     subject: 'Mine Invite Code',
-                    sharePositionOrigin: box != null
-                        ? box.localToGlobal(Offset.zero) & box.size
-                        : null,
+                    sharePositionOrigin: origin,
                   );
                 } catch (e) {
                   // Fallback to clipboard if native share fails or unsupported
                   await Clipboard.setData(ClipboardData(text: invitePayload));
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Invite link copied to clipboard!'),
-                        backgroundColor: MineTheme.surfaceDark,
-                      ),
-                    );
-                  }
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Invite link copied to clipboard!'),
+                      backgroundColor: MineTheme.surfaceDark,
+                    ),
+                  );
                 }
               },
               icon: const Icon(Icons.share_outlined),

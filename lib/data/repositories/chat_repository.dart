@@ -12,7 +12,31 @@ class ChatRepository {
   final AppDatabase appDatabase;
   final Uuid _uuid = const Uuid();
 
+  // In-memory transient message store for temporary chats (Save History = false)
+  final Map<String, List<MessageModel>> _transientMessages = {};
+
   ChatRepository({required this.appDatabase});
+
+  /// Adds a temporary / transient message to in-memory active session store
+  void addTransientMessage(MessageModel message) {
+    final list = _transientMessages.putIfAbsent(message.conversationId, () => []);
+    final idx = list.indexWhere((m) => m.id == message.id);
+    if (idx != -1) {
+      list[idx] = message;
+    } else {
+      list.add(message);
+    }
+  }
+
+  /// Clears transient/temporary in-memory messages for a specific conversation
+  void clearTransientMessages(String conversationId) {
+    _transientMessages.remove(conversationId);
+  }
+
+  /// Clears all transient/temporary in-memory messages across all conversations
+  void clearAllTransientMessages() {
+    _transientMessages.clear();
+  }
 
   /// Offloads ciphertext exceeding 30KB to local app storage file to prevent SQLite CursorWindow (2MB) overflow
   Future<String> _offloadCiphertextIfNeeded(String messageId, String ciphertext) async {
@@ -95,7 +119,7 @@ class ChatRepository {
       ORDER BY COALESCE(c.last_message_at, c.created_at) DESC
     ''');
 
-    return results.map((row) {
+    final convs = results.map((row) {
       final contact = ContactModel(
         id: row['contact_id'] as String,
         peerDeviceId: row['peer_device_id'] as String,
@@ -106,19 +130,37 @@ class ChatRepository {
         updatedAt: DateTime.parse(row['contact_updated_at'] as String),
       );
 
-      final conv = ConversationModel(
-        id: row['conv_id'] as String,
+      DateTime? lastAt = row['last_message_at'] != null
+          ? DateTime.parse(row['last_message_at'] as String)
+          : null;
+
+      final convId = row['conv_id'] as String;
+      final transientList = _transientMessages[convId];
+      if (transientList != null && transientList.isNotEmpty) {
+        final lastTransientAt = transientList.last.timestamp;
+        if (lastAt == null || lastTransientAt.isAfter(lastAt)) {
+          lastAt = lastTransientAt;
+        }
+      }
+
+      return ConversationModel(
+        id: convId,
         contactId: row['contact_id'] as String,
         createdAt: DateTime.parse(row['conv_created_at'] as String),
         updatedAt: DateTime.parse(row['conv_updated_at'] as String),
-        lastMessageAt: row['last_message_at'] != null
-            ? DateTime.parse(row['last_message_at'] as String)
-            : null,
+        lastMessageAt: lastAt,
         contact: contact,
       );
-
-      return conv;
     }).toList();
+
+    // Re-sort in case an in-memory transient message bumped a conversation
+    convs.sort((a, b) {
+      final aTime = a.lastMessageAt ?? a.createdAt;
+      final bTime = b.lastMessageAt ?? b.createdAt;
+      return bTime.compareTo(aTime);
+    });
+
+    return convs;
   }
 
   /// Saves an end-to-end encrypted message (strictly ciphertext, offloading large blobs to disk)
@@ -149,6 +191,16 @@ class ChatRepository {
 
   /// Updates status of a message (e.g., pending -> sent -> delivered -> read)
   Future<void> updateMessageStatus(String messageId, MessageStatus status) async {
+    for (final list in _transientMessages.values) {
+      final idx = list.indexWhere((m) => m.id == messageId);
+      if (idx != -1) {
+        final current = list[idx];
+        if (current.status.index < status.index || current.status == MessageStatus.failed) {
+          list[idx] = current.copyWith(status: status);
+        }
+      }
+    }
+
     final db = await appDatabase.database;
     final existing = await db.query(
       'messages',
@@ -177,13 +229,20 @@ class ChatRepository {
 
   /// Updates ephemeral view count and expired status of a message
   Future<void> updateMessageViewCount(String messageId, int viewCount) async {
+    final isExpired = viewCount >= 2;
+    for (final list in _transientMessages.values) {
+      final idx = list.indexWhere((m) => m.id == messageId);
+      if (idx != -1) {
+        list[idx] = list[idx].copyWith(viewCount: viewCount, isExpired: isExpired);
+      }
+    }
+
     final db = await appDatabase.database;
-    final isExpired = viewCount >= 2 ? 1 : 0;
     await db.update(
       'messages',
       {
         'view_count': viewCount,
-        'is_expired': isExpired,
+        'is_expired': isExpired ? 1 : 0,
       },
       where: 'id = ?',
       whereArgs: [messageId],
@@ -193,6 +252,7 @@ class ChatRepository {
   /// Retrieves messages for a conversation ordered chronologically
   Future<List<MessageModel>> getMessages(String conversationId) async {
     final db = await appDatabase.database;
+    final list = <MessageModel>[];
     try {
       final maps = await db.query(
         'messages',
@@ -200,7 +260,6 @@ class ChatRepository {
         whereArgs: [conversationId],
         orderBy: 'timestamp ASC',
       );
-      final list = <MessageModel>[];
       for (final m in maps) {
         var model = MessageModel.fromMap(m);
         if (model.ciphertext.startsWith('FILE_REF:')) {
@@ -209,7 +268,6 @@ class ChatRepository {
         }
         list.add(model);
       }
-      return list;
     } catch (e) {
       if (e.toString().contains('CursorWindow') || e.toString().contains('Row too big')) {
         // Auto-recover from oversized rows in DB by sanitizing overgrown legacy rows
@@ -224,15 +282,31 @@ class ChatRepository {
             whereArgs: [conversationId],
             orderBy: 'timestamp ASC',
           );
-          return retryMaps.map((m) => MessageModel.fromMap(m)).toList();
+          list.addAll(retryMaps.map((m) => MessageModel.fromMap(m)));
         } catch (_) {}
+      } else {
+        rethrow;
       }
-      rethrow;
     }
+
+    // Merge in-memory transient messages for temporary chats
+    final transientList = _transientMessages[conversationId];
+    if (transientList != null && transientList.isNotEmpty) {
+      final existingIds = list.map((m) => m.id).toSet();
+      for (final tm in transientList) {
+        if (!existingIds.contains(tm.id)) {
+          list.add(tm);
+        }
+      }
+      list.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    }
+
+    return list;
   }
 
   /// Retrieves the latest message for a conversation
   Future<MessageModel?> getLastMessage(String conversationId) async {
+    MessageModel? dbLast;
     final db = await appDatabase.database;
     try {
       final maps = await db.query(
@@ -242,13 +316,14 @@ class ChatRepository {
         orderBy: 'timestamp DESC',
         limit: 1,
       );
-      if (maps.isEmpty) return null;
-      var model = MessageModel.fromMap(maps.first);
-      if (model.ciphertext.startsWith('FILE_REF:')) {
-        final resolved = await _resolveCiphertext(model.ciphertext);
-        model = model.copyWith(ciphertext: resolved);
+      if (maps.isNotEmpty) {
+        var model = MessageModel.fromMap(maps.first);
+        if (model.ciphertext.startsWith('FILE_REF:')) {
+          final resolved = await _resolveCiphertext(model.ciphertext);
+          model = model.copyWith(ciphertext: resolved);
+        }
+        dbLast = model;
       }
-      return model;
     } catch (e) {
       if (e.toString().contains('CursorWindow') || e.toString().contains('Row too big')) {
         try {
@@ -263,11 +338,20 @@ class ChatRepository {
             orderBy: 'timestamp DESC',
             limit: 1,
           );
-          if (retryMaps.isNotEmpty) return MessageModel.fromMap(retryMaps.first);
+          if (retryMaps.isNotEmpty) dbLast = MessageModel.fromMap(retryMaps.first);
         } catch (_) {}
       }
-      return null;
     }
+
+    final transientList = _transientMessages[conversationId];
+    if (transientList != null && transientList.isNotEmpty) {
+      final lastTransient = transientList.last;
+      if (dbLast == null || lastTransient.timestamp.isAfter(dbLast.timestamp)) {
+        return lastTransient;
+      }
+    }
+
+    return dbLast;
   }
 
   /// Offline local outbox: queries all messages with status == 'pending'
@@ -294,6 +378,9 @@ class ChatRepository {
 
   /// Deletes a single message
   Future<void> deleteMessage(String messageId) async {
+    for (final list in _transientMessages.values) {
+      list.removeWhere((m) => m.id == messageId);
+    }
     final db = await appDatabase.database;
     await db.delete(
       'messages',
@@ -304,6 +391,7 @@ class ChatRepository {
 
   /// Deletes an entire conversation and associated records
   Future<void> deleteConversation(String conversationId) async {
+    _transientMessages.remove(conversationId);
     final db = await appDatabase.database;
     await db.delete(
       'conversations',
@@ -316,6 +404,7 @@ class ChatRepository {
   Future<int> getUnreadCount(String conversationId, String myDeviceId) async {
     final db = await appDatabase.database;
     final normalizedMyId = myDeviceId.trim().toUpperCase();
+    int dbCount = 0;
     final result = await db.rawQuery('''
       SELECT COUNT(*) as cnt FROM messages
       WHERE conversation_id = ? 
@@ -323,8 +412,20 @@ class ChatRepository {
         AND status != ?
     ''', [conversationId, normalizedMyId, MessageStatus.read.name]);
     if (result.isNotEmpty) {
-      return (result.first['cnt'] as int?) ?? 0;
+      dbCount = (result.first['cnt'] as int?) ?? 0;
     }
-    return 0;
+
+    int transientCount = 0;
+    final transientList = _transientMessages[conversationId];
+    if (transientList != null && transientList.isNotEmpty) {
+      for (final tm in transientList) {
+        if (tm.senderId.trim().toUpperCase() != normalizedMyId &&
+            tm.status != MessageStatus.read) {
+          transientCount++;
+        }
+      }
+    }
+
+    return dbCount + transientCount;
   }
 }

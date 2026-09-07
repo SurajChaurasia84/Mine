@@ -19,6 +19,7 @@ import 'widgets/chat_doodle_painter.dart';
 import 'widgets/chat_input_bar.dart';
 import 'widgets/ephemeral_media_viewer_screen.dart';
 import 'widgets/message_bubble.dart';
+import 'widgets/save_history_icon_button.dart';
 
 class ChatConversationScreen extends StatefulWidget {
   final ContactModel contact;
@@ -41,9 +42,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   final List<MessageModel> _messages = [];
   late final ScrollController _scrollController = ScrollController(initialScrollOffset: 999999.0);
   final GlobalKey<ChatInputBarState> _inputKey = GlobalKey<ChatInputBarState>();
+  bool _saveHistory = false;
   StreamSubscription? _messageSub;
   StreamSubscription? _receiptSub;
   StreamSubscription? _readReceiptSub;
+  StreamSubscription? _historyToggleSub;
   Timer? _presenceTimer;
 
   @override
@@ -113,7 +116,39 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           }
         });
       });
+
+      _historyToggleSub = connManager.onHistoryToggleReceived.listen((event) {
+        if (event.peerDeviceId.trim().toUpperCase() == _currentContact.peerDeviceId.trim().toUpperCase()) {
+          if (mounted) {
+            setState(() {
+              _saveHistory = event.saveHistory;
+            });
+            _insertSystemEvent(
+              event.saveHistory
+                  ? '${_currentContact.nickname} turned off temporary chat'
+                  : '${_currentContact.nickname} turned on temporary chat',
+            );
+          }
+        }
+      });
     });
+  }
+
+  void _insertSystemEvent(String text) {
+    final sysMsg = MessageModel(
+      id: 'sys_${DateTime.now().millisecondsSinceEpoch}',
+      conversationId: widget.conversation.id,
+      senderId: 'system',
+      ciphertext: '',
+      timestamp: DateTime.now(),
+      status: MessageStatus.delivered,
+      messageType: MessageType.system,
+      decryptedContent: text,
+    );
+    setState(() {
+      _messages.add(sysMsg);
+    });
+    _scrollToBottom(animate: true);
   }
 
   @override
@@ -122,6 +157,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     _messageSub?.cancel();
     _receiptSub?.cancel();
     _readReceiptSub?.cancel();
+    _historyToggleSub?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -180,6 +216,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       contact: _currentContact,
       conversation: widget.conversation,
       text: text,
+      saveHistory: _saveHistory,
     );
 
     setState(() {
@@ -347,6 +384,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         conversation: widget.conversation,
         rawBytes: rawBytes,
         mediaType: isVideo ? 'video' : 'photo',
+        saveHistory: _saveHistory,
       );
 
       if (mounted) {
@@ -553,6 +591,26 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           ],
         ),
         actions: [
+          SaveHistoryIconButton(
+            isSaved: _saveHistory,
+            onTap: () {
+              final newState = !_saveHistory;
+              setState(() {
+                _saveHistory = newState;
+              });
+              final connManager = context.read<ConnectionManager>();
+              connManager.sendHistoryToggle(
+                contact: _currentContact,
+                saveHistory: newState,
+              );
+              _insertSystemEvent(
+                newState
+                    ? 'You turned off temporary chat'
+                    : 'You turned on temporary chat',
+              );
+            },
+          ),
+          const SizedBox(width: 2),
           PopupMenuButton<String>(
             color: MineTheme.surfaceDark,
             icon: const Icon(Icons.more_vert, color: MineTheme.textLight),

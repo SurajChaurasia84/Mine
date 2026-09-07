@@ -5,11 +5,13 @@ import 'emoji_picker_widget.dart';
 class ChatInputBar extends StatefulWidget {
   final Function(String text) onSend;
   final VoidCallback? onAttach;
+  final VoidCallback? onTap;
 
   const ChatInputBar({
     super.key,
     required this.onSend,
     this.onAttach,
+    this.onTap,
   });
 
   @override
@@ -39,8 +41,11 @@ class ChatInputBarState extends State<ChatInputBar> {
     });
 
     _focusNode.addListener(() {
-      if (_focusNode.hasFocus && _showEmoji) {
-        setState(() => _showEmoji = false);
+      if (_focusNode.hasFocus) {
+        if (_showEmoji) {
+          setState(() => _showEmoji = false);
+        }
+        widget.onTap?.call();
       }
     });
   }
@@ -170,6 +175,7 @@ class ChatInputBarState extends State<ChatInputBar> {
                                 if (_showEmoji) {
                                   setState(() => _showEmoji = false);
                                 }
+                                widget.onTap?.call();
                               },
                               decoration: const InputDecoration(
                                 hintText: 'Message',

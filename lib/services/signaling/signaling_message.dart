@@ -15,6 +15,7 @@ class SignalingEnvelope {
   final String? messageId;
   final String? senderDhPublicKey;
   final String? senderIdentityPublicKey;
+  final bool? saveHistory;
   final DateTime timestamp;
 
   SignalingEnvelope({
@@ -25,6 +26,7 @@ class SignalingEnvelope {
     this.messageId,
     this.senderDhPublicKey,
     this.senderIdentityPublicKey,
+    this.saveHistory,
     DateTime? timestamp,
   })  : to = to.trim().toUpperCase(),
         from = from.trim().toUpperCase(),
@@ -40,6 +42,7 @@ class SignalingEnvelope {
       'messageId': messageId,
       'senderDhPublicKey': senderDhPublicKey,
       'senderIdentityPublicKey': senderIdentityPublicKey,
+      if (saveHistory != null) 'saveHistory': saveHistory,
       'timestamp': timestamp.toIso8601String(),
     });
   }
@@ -53,6 +56,7 @@ class SignalingEnvelope {
       messageId: map['messageId'] as String?,
       senderDhPublicKey: map['senderDhPublicKey'] as String?,
       senderIdentityPublicKey: map['senderIdentityPublicKey'] as String?,
+      saveHistory: map['saveHistory'] as bool?,
       timestamp: map['timestamp'] != null
           ? DateTime.parse(map['timestamp'] as String)
           : DateTime.now(),

@@ -164,11 +164,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               final newName = controller.text.trim();
               if (newName.isNotEmpty) {
                 final keyStore = context.read<SecureKeyStore>();
+                final connManager = context.read<ConnectionManager>();
                 await keyStore.setDisplayName(newName);
+                try {
+                  connManager.updateMyDisplayName(newName);
+                } catch (_) {}
                 if (mounted) {
-                  try {
-                    context.read<ConnectionManager>().updateMyDisplayName(newName);
-                  } catch (_) {}
                   setState(() => _displayName = newName);
                 }
               }
@@ -253,7 +254,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   return;
                 }
                 final keyStore = context.read<SecureKeyStore>();
+                final connManager = context.read<ConnectionManager>();
                 await keyStore.setPasscode(newCode);
+                try {
+                  connManager.publishEncryptedDirectoryCard();
+                } catch (_) {}
                 if (ctx.mounted) {
                   Navigator.pop(ctx);
                 }
@@ -278,15 +283,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _shareInvite() async {
     final payload = widget.identity.toPublicInvitePayload(passcode: _passcode, name: _displayName);
     final inviteLink = 'mine://invite?p=$payload';
+    final box = context.findRenderObject() as RenderBox?;
+    final origin = box != null ? box.localToGlobal(Offset.zero) & box.size : null;
     try {
-      final box = context.findRenderObject() as RenderBox?;
       // ignore: deprecated_member_use
       await Share.share(
         inviteLink,
         subject: 'Mine Invite Code',
-        sharePositionOrigin: box != null
-            ? box.localToGlobal(Offset.zero) & box.size
-            : null,
+        sharePositionOrigin: origin,
       );
     } catch (e) {
       await Clipboard.setData(ClipboardData(text: inviteLink));

@@ -142,7 +142,7 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
         ),
         const SizedBox(height: 20),
         const Text(
-          'Anonymous Identity Ready',
+          'Private Messenger',
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 22,
@@ -151,7 +151,7 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
         ),
         const SizedBox(height: 6),
         const Text(
-          'No phone number. No email. No central account.\nProtected with 6-digit Passcode & cryptography.',
+          'Continue with your USER ID & 6-digit Passcode.',
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 13,

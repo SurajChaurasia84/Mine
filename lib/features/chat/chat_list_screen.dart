@@ -285,7 +285,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                 child: UserAvatar(
                   nameOrId: (connManager.myDisplayName != null && connManager.myDisplayName!.isNotEmpty)
                       ? connManager.myDisplayName!
-                      : widget.identity.deviceId,
+                      : '',
                   colorKey: widget.identity.deviceId,
                   radius: 17,
                   fontSize: 14,

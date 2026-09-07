@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 
 class EphemeralMediaPayload {
   final String mediaType; // 'photo' | 'video'
@@ -70,6 +71,28 @@ class EphemeralMediaService {
     return List<int>.generate(32, (_) => random.nextInt(256));
   }
 
+  /// Compresses high-res images to optimal size (~200KB) for lightning-fast transmission
+  Uint8List _optimizePhotoBytes(Uint8List rawBytes) {
+    try {
+      if (rawBytes.length <= 300000) return rawBytes;
+      final image = img.decodeImage(rawBytes);
+      if (image == null) return rawBytes;
+
+      img.Image resized = image;
+      if (image.width > 1600 || image.height > 1600) {
+        resized = img.copyResize(
+          image,
+          width: image.width > image.height ? 1600 : null,
+          height: image.height >= image.width ? 1600 : null,
+          interpolation: img.Interpolation.linear,
+        );
+      }
+      return Uint8List.fromList(img.encodeJpg(resized, quality: 82));
+    } catch (_) {
+      return rawBytes;
+    }
+  }
+
   /// Encrypts raw in-memory bytes with AES-256-GCM and uploads ciphertext blob
   Future<EphemeralMediaPayload> encryptAndUpload({
     required Uint8List rawBytes,
@@ -77,12 +100,13 @@ class EphemeralMediaService {
     String? caption,
     String? senderName,
   }) async {
+    final processedBytes = mediaType == 'photo' ? _optimizePhotoBytes(rawBytes) : rawBytes;
     final keyBytes = generateMediaKey();
     final secretKey = SecretKey(keyBytes);
 
     // 1. Encrypt with AES-GCM
     final secretBox = await _aesGcm.encrypt(
-      rawBytes,
+      processedBytes,
       secretKey: secretKey,
     );
 
@@ -97,81 +121,80 @@ class EphemeralMediaService {
 
     final keyBase64 = base64.encode(keyBytes);
 
-    // For media <= 3.5 MB (standard photos and compressed videos), always embed inline
-    // ciphertext directly in the E2EE envelope for 100% reliable zero-dependency delivery.
     String blobUrl = '';
     String? inlineData;
 
-    if (encryptedBlob.length <= 3500000) {
+    // For tiny payloads <= 180KB (e.g. low-res thumbnail/tiny image), embed inline directly in E2EE message for 0ms instant delivery
+    if (encryptedBlob.length <= 180000) {
       inlineData = base64.encode(encryptedBlob);
     } else {
       try {
         blobUrl = await _uploadToRelay(encryptedBlob);
       } catch (e) {
-        inlineData = base64.encode(encryptedBlob);
+        // Log upload error
       }
     }
 
     if (blobUrl.isEmpty && inlineData == null) {
-      inlineData = base64.encode(encryptedBlob);
+      // If upload failed, only embed inline if size is within safe MQTT broker limit (< 300KB)
+      if (encryptedBlob.length <= 300000) {
+        inlineData = base64.encode(encryptedBlob);
+      } else {
+        throw Exception('Media upload failed. Please check internet connection.');
+      }
     }
 
     return EphemeralMediaPayload(
       mediaType: mediaType,
       url: blobUrl,
       mediaKeyBase64: keyBase64,
-      size: rawBytes.length,
+      size: processedBytes.length,
       inlineCiphertext: inlineData,
       caption: caption,
       senderName: senderName,
     );
   }
 
-  /// Uploads binary ciphertext to ephemeral storage relay (Catbox / tmpfiles)
+  /// Uploads binary ciphertext to fast, reliable ephemeral relays (Bytebin / Filebin)
   Future<String> _uploadToRelay(Uint8List encryptedBytes) async {
+    // 1. Primary Relay: Bytebin (Direct raw binary POST, high-speed CDN, full CORS support)
     try {
-      // tmpfiles.org upload API
-      final uri = Uri.parse('https://tmpfiles.org/api/v1/upload');
-      final request = http.MultipartRequest('POST', uri);
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          encryptedBytes,
-          filename: 'ephemeral_${DateTime.now().millisecondsSinceEpoch}.enc',
-        ),
-      );
+      final uri = Uri.parse('https://bytebin.lucko.me/post');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'User-Agent': 'MineMessenger/1.0',
+        },
+        body: encryptedBytes,
+      ).timeout(const Duration(seconds: 30));
 
-      final response = await request.send().timeout(const Duration(seconds: 15));
-      if (response.statusCode == 200) {
-        final respStr = await response.stream.bytesToString();
-        final json = jsonDecode(respStr);
-        if (json['status'] == 'success' && json['data'] != null) {
-          final rawUrl = json['data']['url'] as String;
-          // Convert view page URL to direct download URL (tmpfiles.org/XXXX -> tmpfiles.org/dl/XXXX)
-          return rawUrl.replaceFirst('tmpfiles.org/', 'tmpfiles.org/dl/');
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        if (json is Map && json['key'] != null) {
+          final key = json['key'] as String;
+          final directUrl = 'https://bytebin.lucko.me/$key';
+          return directUrl;
         }
       }
     } catch (_) {}
 
-    // Fallback: Catbox.moe
+    // 2. Secondary Relay: Filebin.net (Direct binary POST, CORS enabled, no auth needed)
     try {
-      final uri = Uri.parse('https://catbox.moe/user/api.php');
-      final request = http.MultipartRequest('POST', uri);
-      request.fields['reqtype'] = 'fileupload';
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'fileToUpload',
-          encryptedBytes,
-          filename: 'blob_${DateTime.now().millisecondsSinceEpoch}.enc',
-        ),
-      );
+      final binId = 'mine_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
+      final fileName = 'enc_${DateTime.now().millisecondsSinceEpoch}.bin';
+      final uri = Uri.parse('https://filebin.net/$binId/$fileName');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'User-Agent': 'MineMessenger/1.0',
+        },
+        body: encryptedBytes,
+      ).timeout(const Duration(seconds: 35));
 
-      final response = await request.send().timeout(const Duration(seconds: 15));
-      if (response.statusCode == 200) {
-        final directUrl = (await response.stream.bytesToString()).trim();
-        if (directUrl.startsWith('http')) {
-          return directUrl;
-        }
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        return 'https://filebin.net/$binId/$fileName';
       }
     } catch (_) {}
 
@@ -194,12 +217,16 @@ class EphemeralMediaService {
     if (payload.inlineCiphertext != null && payload.inlineCiphertext!.isNotEmpty) {
       encryptedData = decodeBase64Safe(payload.inlineCiphertext!);
     } else if (payload.url.isNotEmpty) {
-      final response = await http.get(Uri.parse(payload.url)).timeout(const Duration(seconds: 20));
+      final headers = <String, String>{
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+      };
+      final response = await http.get(Uri.parse(payload.url), headers: headers).timeout(const Duration(seconds: 45));
       if (response.statusCode == 200) {
         final body = response.bodyBytes;
         if (body.length > 5 && (body[0] == 60 || body[0] == 123)) {
           final preview = String.fromCharCodes(body.take(100));
-          if (preview.contains('<html') || preview.contains('<!DOCTYPE') || preview.contains('"error"')) {
+          if (preview.contains('<html') || preview.contains('<!DOCTYPE') || preview.contains('"error"') || preview.contains('BunkerWeb')) {
             throw Exception('Relay server error: returned HTML webpage instead of encrypted media file');
           }
         }

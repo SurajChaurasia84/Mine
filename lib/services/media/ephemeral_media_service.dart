@@ -85,21 +85,25 @@ class EphemeralMediaService {
     builder.add(secretBox.cipherText);
     final encryptedBlob = builder.toBytes();
 
-    final keyBase64 = base64Url.encode(keyBytes);
+    final keyBase64 = base64.encode(keyBytes);
 
-    // 2. Upload ciphertext to temporary zero-knowledge relay
+    // For media <= 3.5 MB (standard photos and compressed videos), always embed inline
+    // ciphertext directly in the E2EE envelope for 100% reliable zero-dependency delivery.
     String blobUrl = '';
     String? inlineData;
 
-    try {
-      blobUrl = await _uploadToRelay(encryptedBlob);
-    } catch (e) {
-      // Fallback: If upload fails or file is small, embed inline base64 ciphertext
-      inlineData = base64Url.encode(encryptedBlob);
+    if (encryptedBlob.length <= 3500000) {
+      inlineData = base64.encode(encryptedBlob);
+    } else {
+      try {
+        blobUrl = await _uploadToRelay(encryptedBlob);
+      } catch (e) {
+        inlineData = base64.encode(encryptedBlob);
+      }
     }
 
     if (blobUrl.isEmpty && inlineData == null) {
-      inlineData = base64Url.encode(encryptedBlob);
+      inlineData = base64.encode(encryptedBlob);
     }
 
     return EphemeralMediaPayload(
@@ -164,19 +168,39 @@ class EphemeralMediaService {
 
   /// Downloads ciphertext blob and decrypts directly into volatile memory (RAM)
   Future<Uint8List> downloadAndDecrypt(EphemeralMediaPayload payload) async {
+    Uint8List decodeBase64Safe(String str) {
+      final normalized = base64.normalize(str);
+      try {
+        return base64.decode(normalized);
+      } catch (_) {
+        return base64Url.decode(normalized);
+      }
+    }
+
     Uint8List encryptedData;
 
     if (payload.inlineCiphertext != null && payload.inlineCiphertext!.isNotEmpty) {
-      encryptedData = base64Url.decode(payload.inlineCiphertext!);
+      encryptedData = decodeBase64Safe(payload.inlineCiphertext!);
     } else if (payload.url.isNotEmpty) {
       final response = await http.get(Uri.parse(payload.url)).timeout(const Duration(seconds: 20));
       if (response.statusCode == 200) {
-        encryptedData = response.bodyBytes;
+        final body = response.bodyBytes;
+        if (body.length > 5 && (body[0] == 60 || body[0] == 123)) {
+          final preview = String.fromCharCodes(body.take(100));
+          if (preview.contains('<html') || preview.contains('<!DOCTYPE') || preview.contains('"error"')) {
+            throw Exception('Relay server error: returned HTML webpage instead of encrypted media file');
+          }
+        }
+        encryptedData = body;
       } else {
         throw Exception('Failed to download encrypted media (Status: ${response.statusCode})');
       }
     } else {
       throw Exception('No media source available');
+    }
+
+    if (encryptedData.length < 32) {
+      throw Exception('Corrupted or invalid encrypted payload (size: ${encryptedData.length} bytes)');
     }
 
     // Decrypt binary format
@@ -191,7 +215,7 @@ class EphemeralMediaService {
 
     final cipherText = encryptedData.sublist(offset);
 
-    final keyBytes = base64Url.decode(payload.mediaKeyBase64);
+    final keyBytes = decodeBase64Safe(payload.mediaKeyBase64);
     final secretKey = SecretKey(keyBytes);
 
     final secretBox = SecretBox(

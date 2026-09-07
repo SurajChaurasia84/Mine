@@ -10,6 +10,7 @@ import '../../data/models/message_model.dart';
 import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/contact_repository.dart';
 import '../../services/connection_manager/connection_manager.dart';
+import '../../services/media/ephemeral_media_service.dart';
 import '../../services/signaling/signaling_client.dart';
 import '../contacts/add_contact_screen.dart';
 import '../contacts/qr_display_screen.dart';
@@ -93,7 +94,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
           final lastMsg = await chatRepo.getLastMessage(conv.id);
           if (lastMsg != null) {
             final decrypted = await connManager.decryptMessageContent(lastMsg, conv.contact!);
-            conv.lastMessageSnippet = decrypted;
+            String displaySnippet = decrypted ?? '';
+            final ephemeral = EphemeralMediaPayload.tryParse(displaySnippet);
+            if (ephemeral != null) {
+              displaySnippet = ephemeral.mediaType == 'video' ? '🎥 Video' : '📷 Photo';
+            } else if (lastMsg.messageType == MessageType.image) {
+              displaySnippet = '📷 Photo';
+            } else if (lastMsg.messageType == MessageType.video) {
+              displaySnippet = '🎥 Video';
+            }
+            conv.lastMessageSnippet = displaySnippet;
             conv.lastMessageStatus = lastMsg.status;
             conv.lastMessageIsMe = lastMsg.senderId.trim().toUpperCase() == widget.identity.deviceId.trim().toUpperCase();
           }
@@ -568,15 +578,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
   }
 
   Widget _buildSnippet(String snippet, Color textColor, double fontSize, FontWeight fontWeight) {
+    String cleanSnippet = snippet;
+    if (cleanSnippet.startsWith('{"type":"ephemeral_media"') || cleanSnippet.startsWith('{"type": "ephemeral_media"')) {
+      final ephemeral = EphemeralMediaPayload.tryParse(cleanSnippet);
+      if (ephemeral != null) {
+        cleanSnippet = ephemeral.mediaType == 'video' ? '🎥 Video' : '📷 Photo';
+      } else {
+        cleanSnippet = '📷 Photo';
+      }
+    }
+
     // Regex matching emoji sequences
     final emojiRegex = RegExp(
       r'(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])+'
     );
 
-    final matches = emojiRegex.allMatches(snippet);
+    final matches = emojiRegex.allMatches(cleanSnippet);
     if (matches.isEmpty) {
       return Text(
-        snippet,
+        cleanSnippet,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(

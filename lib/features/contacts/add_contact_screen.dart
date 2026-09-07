@@ -109,7 +109,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
 
       try {
         final connManager = context.read<ConnectionManager>();
-        final keys = await connManager.signalingClient.resolvePeerKeys(
+        final keys = await connManager.resolvePeerKeysWithPasscode(
           normalized,
           passcode: passcode,
         );
@@ -121,6 +121,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
             _nicknameController.text = peerName.trim();
           } else {
             final existing = await widget.contactRepository.findByPeerDeviceId(normalized);
+            if (!mounted) return;
             if (existing != null && existing.nickname.trim().isNotEmpty && !existing.nickname.startsWith('User ')) {
               _nicknameController.text = existing.nickname.trim();
             }
@@ -145,7 +146,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
         } else {
           setState(() {
             _isResolving = false;
-            _errorMessage = 'Could not find user "$normalized" right now.';
+            _errorMessage = 'Could not find user "$normalized". Please ensure User ID is correct.';
           });
           return;
         }

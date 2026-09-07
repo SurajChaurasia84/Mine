@@ -174,6 +174,29 @@ class CryptoService {
     return Uint8List.fromList(decrypted);
   }
 
+  /// Encrypts directory card payload using AES-256-GCM keyed by SHA-256(deviceId:passcode)
+  Future<String> encryptWithPasscode({
+    required String plaintext,
+    required String deviceId,
+    required String passcode,
+  }) async {
+    final seed = utf8.encode('${deviceId.trim().toUpperCase()}:${passcode.trim()}');
+    final hash = await Sha256().hash(seed);
+    return encryptMessage(plaintext: plaintext, sessionKeyBytes: hash.bytes);
+  }
+
+  /// Decrypts directory card payload using AES-256-GCM keyed by SHA-256(deviceId:passcode)
+  /// Throws an exception (e.g. MacValidationException) if passcode is incorrect or payload is tampered
+  Future<String> decryptWithPasscode({
+    required String encryptedJson,
+    required String deviceId,
+    required String passcode,
+  }) async {
+    final seed = utf8.encode('${deviceId.trim().toUpperCase()}:${passcode.trim()}');
+    final hash = await Sha256().hash(seed);
+    return decryptMessage(encryptedJson: encryptedJson, sessionKeyBytes: hash.bytes);
+  }
+
   // --- Utilities ---
   static String _bytesToHex(Uint8List bytes) {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();

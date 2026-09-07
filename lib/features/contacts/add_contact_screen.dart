@@ -76,6 +76,10 @@ class _AddContactScreenState extends State<AddContactScreen> {
     // 1. Check if invite link or base64 QR payload
     final parsed = KeyPairBundle.parseInvitePayload(text);
     if (parsed != null) {
+      final name = parsed['name'];
+      if (name != null && name.trim().isNotEmpty) {
+        _nicknameController.text = name.trim();
+      }
       setState(() {
         _parsedPayload = parsed;
         _isVerified = true;
@@ -112,13 +116,26 @@ class _AddContactScreenState extends State<AddContactScreen> {
         if (!mounted) return;
 
         if (keys != null && keys['ik'] != null && keys['dh'] != null) {
+          final peerName = keys['name'];
+          if (peerName != null && peerName.trim().isNotEmpty) {
+            _nicknameController.text = peerName.trim();
+          } else {
+            final existing = await widget.contactRepository.findByPeerDeviceId(normalized);
+            if (existing != null && existing.nickname.trim().isNotEmpty && !existing.nickname.startsWith('User ')) {
+              _nicknameController.text = existing.nickname.trim();
+            }
+          }
+
+          final payload = <String, String>{
+            'deviceId': normalized,
+            'identityPublicKey': keys['ik']!,
+            'dhPublicKey': keys['dh']!,
+          };
+          if (passcode.isNotEmpty) payload['passcode'] = passcode;
+          if (peerName != null && peerName.isNotEmpty) payload['name'] = peerName;
+
           setState(() {
-            _parsedPayload = {
-              'deviceId': normalized,
-              'identityPublicKey': keys['ik']!,
-              'dhPublicKey': keys['dh']!,
-              if (passcode.isNotEmpty) 'passcode': passcode,
-            };
+            _parsedPayload = payload;
             _isVerified = true;
             _errorMessage = null;
             _isResolving = false;

@@ -18,6 +18,7 @@ class QrDisplayScreen extends StatefulWidget {
 
 class _QrDisplayScreenState extends State<QrDisplayScreen> {
   String? _passcode;
+  String? _displayName;
 
   @override
   void initState() {
@@ -28,14 +29,18 @@ class _QrDisplayScreenState extends State<QrDisplayScreen> {
   Future<void> _loadPasscode() async {
     final keyStore = context.read<SecureKeyStore>();
     final code = await keyStore.getOrGeneratePasscode();
+    final name = await keyStore.getDisplayName();
     if (mounted) {
-      setState(() => _passcode = code);
+      setState(() {
+        _passcode = code;
+        _displayName = name;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final invitePayload = 'mine://invite?p=${widget.identity.toPublicInvitePayload(passcode: _passcode)}';
+    final invitePayload = 'mine://invite?p=${widget.identity.toPublicInvitePayload(passcode: _passcode, name: _displayName)}';
 
     return Scaffold(
       appBar: AppBar(

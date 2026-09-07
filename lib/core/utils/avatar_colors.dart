@@ -8,7 +8,7 @@ class AvatarColors {
   const AvatarColors({required this.background, required this.foreground});
 
   static const List<AvatarColors> _palette = [
-    AvatarColors(background: Color(0xFF362C22), foreground: Color(0xFFD4B892)), // Olive Brown / Beige (as in screenshot)
+    AvatarColors(background: Color(0xFF362C22), foreground: Color(0xFFD4B892)), // Olive Brown / Beige
     AvatarColors(background: Color(0xFF16384C), foreground: Color(0xFF53BDEB)), // Slate Navy / Sky Blue
     AvatarColors(background: Color(0xFF3B1F34), foreground: Color(0xFFE170B7)), // Deep Plum / Rose Pink
     AvatarColors(background: Color(0xFF143828), foreground: Color(0xFF25D366)), // Deep Pine / Emerald Green
@@ -28,5 +28,78 @@ class AvatarColors {
       hash = (hash * 31 + key.codeUnitAt(i)) & 0x7FFFFFFF;
     }
     return _palette[hash % _palette.length];
+  }
+}
+
+/// A reusable, responsive Avatar that gracefully handles:
+/// - Letters -> displays uppercase initial ('A' - 'Z')
+/// - Numeric numbers -> displays the first numeric number ('0' - '9')
+/// - Emojis / symbols -> displays person icon
+class UserAvatar extends StatelessWidget {
+  final String nameOrId;
+  final double radius;
+  final double? fontSize;
+  final double? iconSize;
+
+  const UserAvatar({
+    super.key,
+    required this.nameOrId,
+    this.radius = 24,
+    this.fontSize,
+    this.iconSize,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AvatarColors.forName(nameOrId);
+    final trimmed = nameOrId.trim();
+
+    Widget child;
+    if (trimmed.isEmpty) {
+      child = Icon(
+        Icons.person_rounded,
+        color: colors.foreground,
+        size: iconSize ?? (radius * 1.1),
+      );
+    } else {
+      final firstGrapheme = trimmed.characters.first;
+      final isDigit = RegExp(r'^[0-9]$').hasMatch(firstGrapheme);
+      final isAlpha = RegExp(r'^[a-zA-Z\u00C0-\u024F\u0900-\u097F]$').hasMatch(firstGrapheme);
+
+      if (isDigit) {
+        // First numeric number
+        child = Text(
+          firstGrapheme,
+          style: TextStyle(
+            fontSize: fontSize ?? (radius * 0.82),
+            fontWeight: FontWeight.bold,
+            color: colors.foreground,
+          ),
+        );
+      } else if (isAlpha) {
+        // Uppercase alphabet
+        child = Text(
+          firstGrapheme.toUpperCase(),
+          style: TextStyle(
+            fontSize: fontSize ?? (radius * 0.82),
+            fontWeight: FontWeight.bold,
+            color: colors.foreground,
+          ),
+        );
+      } else {
+        // Emoji, symbol, etc -> Show person icon
+        child = Icon(
+          Icons.person_rounded,
+          color: colors.foreground,
+          size: iconSize ?? (radius * 1.1),
+        );
+      }
+    }
+
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: colors.background,
+      child: child,
+    );
   }
 }

@@ -404,18 +404,17 @@ class _IdentitySetupScreenState extends State<IdentitySetupScreen> {
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () async {
+                    final box = context.findRenderObject() as RenderBox?;
+                    final origin = box != null ? box.localToGlobal(Offset.zero) & box.size : null;
                     final name = _nameController.text.trim();
                     final payload = id.toPublicInvitePayload(passcode: _passcode, name: name.isNotEmpty ? name : null);
                     final inviteLink = 'mine://invite?p=$payload';
                     try {
-                      final box = context.findRenderObject() as RenderBox?;
                       // ignore: deprecated_member_use
                       await Share.share(
                         inviteLink,
                         subject: 'Mine Invite Code',
-                        sharePositionOrigin: box != null
-                            ? box.localToGlobal(Offset.zero) & box.size
-                            : null,
+                        sharePositionOrigin: origin,
                       );
                     } catch (e) {
                       await Clipboard.setData(ClipboardData(text: inviteLink));

@@ -45,10 +45,12 @@ class ConnectionManager extends ChangeNotifier {
   final _messageStreamController = StreamController<MessageModel>.broadcast();
   final _receiptStreamController = StreamController<String>.broadcast();
   final _readReceiptStreamController = StreamController<String>.broadcast();
+  final _historyToggleController = StreamController<({String peerDeviceId, bool saveHistory})>.broadcast();
 
   Stream<MessageModel> get onMessageReceived => _messageStreamController.stream;
   Stream<String> get onDeliveryReceipt => _receiptStreamController.stream;
   Stream<String> get onReadReceipt => _readReceiptStreamController.stream;
+  Stream<({String peerDeviceId, bool saveHistory})> get onHistoryToggleReceived => _historyToggleController.stream;
 
   ConnectionManager({
     required this.myIdentity,
@@ -225,16 +227,35 @@ class ConnectionManager extends ChangeNotifier {
     }
   }
 
+  /// Sends a real-time history toggle sync packet to the peer
+  Future<void> sendHistoryToggle({
+    required ContactModel contact,
+    required bool saveHistory,
+  }) async {
+    if (signalingClient.state == SignalingServerState.connected) {
+      final envelope = SignalingEnvelope(
+        to: contact.peerDeviceId,
+        from: myIdentity.deviceId,
+        type: 'history_toggle',
+        payload: saveHistory ? 'true' : 'false',
+        saveHistory: saveHistory,
+        timestamp: DateTime.now(),
+      );
+      signalingClient.sendEnvelope(envelope);
+    }
+  }
+
   /// Sends a plaintext message to a contact:
   /// 1. Derives/reuses E2EE session key
   /// 2. Encrypts plaintext into AES-256-GCM ciphertext
-  /// 3. Saves ciphertext to local database
-  /// 4. If peer is online, delivers immediately; otherwise keeps in local outbox
+  /// 3. Saves ciphertext to local database (ONLY if saveHistory == true)
+  /// 4. If peer is online, delivers immediately; otherwise keeps in local outbox (if saved)
   Future<MessageModel> sendMessage({
     required ContactModel contact,
     required ConversationModel conversation,
     required String text,
     MessageType messageType = MessageType.text,
+    bool saveHistory = false,
   }) async {
     // Derive or retrieve shared session key
     final sessionKey = await _getOrDeriveSessionKey(contact);
@@ -260,8 +281,10 @@ class ConnectionManager extends ChangeNotifier {
       decryptedContent: text,
     );
 
-    // Save strictly ciphertext in local database
-    await chatRepository.saveMessage(message);
+    // Save strictly ciphertext in local database ONLY when saveHistory is true
+    if (saveHistory) {
+      await chatRepository.saveMessage(message);
+    }
     notifyListeners();
 
     // Attempt delivery if connected to signaling gateway
@@ -275,12 +298,15 @@ class ConnectionManager extends ChangeNotifier {
           messageId: messageId,
           senderDhPublicKey: myIdentity.dhPublicKeyHex,
           senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
+          saveHistory: saveHistory,
           timestamp: now,
         );
         signalingClient.sendEnvelope(envelope);
 
         // Successfully dispatched from sender device to signaling network -> Sent (Single tick)
-        await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
+        if (saveHistory) {
+          await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
+        }
         final sentMessage = message.copyWith(status: MessageStatus.sent);
         notifyListeners();
         return sentMessage;
@@ -298,6 +324,7 @@ class ConnectionManager extends ChangeNotifier {
     required ConversationModel conversation,
     required Uint8List rawBytes,
     required String mediaType, // 'photo' | 'video'
+    bool saveHistory = false,
   }) async {
     final messageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${myIdentity.deviceId.hashCode.abs()}';
     final now = DateTime.now();
@@ -331,7 +358,9 @@ class ConnectionManager extends ChangeNotifier {
       decryptedContent: payloadJson,
     );
 
-    await chatRepository.saveMessage(message);
+    if (saveHistory) {
+      await chatRepository.saveMessage(message);
+    }
     notifyListeners();
 
     // Attempt delivery via signaling
@@ -345,11 +374,14 @@ class ConnectionManager extends ChangeNotifier {
           messageId: messageId,
           senderDhPublicKey: myIdentity.dhPublicKeyHex,
           senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
+          saveHistory: saveHistory,
           timestamp: now,
         );
         signalingClient.sendEnvelope(envelope);
 
-        await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
+        if (saveHistory) {
+          await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
+        }
         final sentMessage = message.copyWith(status: MessageStatus.sent);
         notifyListeners();
         return sentMessage;
@@ -551,6 +583,13 @@ class ConnectionManager extends ChangeNotifier {
       return;
     }
 
+    if (envelope.type == 'history_toggle') {
+      final isSaveEnabled = envelope.saveHistory == true || envelope.payload.trim().toLowerCase() == 'true';
+      _historyToggleController.add((peerDeviceId: senderDeviceId, saveHistory: isSaveEnabled));
+      notifyListeners();
+      return;
+    }
+
     if (envelope.type == 'message') {
       // Find or verify contact
       var contact = await contactRepository.findByPeerDeviceId(senderDeviceId);
@@ -604,7 +643,10 @@ class ConnectionManager extends ChangeNotifier {
         decryptedContent: decryptedText,
       );
 
-      await chatRepository.saveMessage(incomingMessage);
+      final bool shouldSave = envelope.saveHistory == true;
+      if (shouldSave) {
+        await chatRepository.saveMessage(incomingMessage);
+      }
 
       // Send back a delivery receipt
       if (envelope.messageId != null) {
@@ -774,6 +816,7 @@ class ConnectionManager extends ChangeNotifier {
     _messageStreamController.close();
     _receiptStreamController.close();
     _readReceiptStreamController.close();
+    _historyToggleController.close();
     super.dispose();
   }
 }

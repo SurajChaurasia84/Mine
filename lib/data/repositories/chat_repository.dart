@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/storage/app_database.dart';
@@ -11,6 +13,39 @@ class ChatRepository {
   final Uuid _uuid = const Uuid();
 
   ChatRepository({required this.appDatabase});
+
+  /// Offloads ciphertext exceeding 30KB to local app storage file to prevent SQLite CursorWindow (2MB) overflow
+  Future<String> _offloadCiphertextIfNeeded(String messageId, String ciphertext) async {
+    if (ciphertext.length <= 30000) {
+      return ciphertext;
+    }
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final mediaDir = Directory('${appDir.path}/media_blobs');
+      if (!mediaDir.existsSync()) {
+        mediaDir.createSync(recursive: true);
+      }
+      final file = File('${mediaDir.path}/$messageId.enc');
+      await file.writeAsString(ciphertext, flush: true);
+      return 'FILE_REF:${file.path}';
+    } catch (_) {
+      return ciphertext;
+    }
+  }
+
+  /// Resolves ciphertext from local file if stored as FILE_REF:
+  Future<String> _resolveCiphertext(String storedCiphertext) async {
+    if (storedCiphertext.startsWith('FILE_REF:')) {
+      final path = storedCiphertext.substring('FILE_REF:'.length);
+      try {
+        final file = File(path);
+        if (file.existsSync()) {
+          return await file.readAsString();
+        }
+      } catch (_) {}
+    }
+    return storedCiphertext;
+  }
 
   /// Gets existing conversation for a contact or creates a new one
   Future<ConversationModel> getOrCreateConversation(String contactId) async {
@@ -86,13 +121,16 @@ class ChatRepository {
     }).toList();
   }
 
-  /// Saves an end-to-end encrypted message (strictly ciphertext)
+  /// Saves an end-to-end encrypted message (strictly ciphertext, offloading large blobs to disk)
   Future<void> saveMessage(MessageModel message) async {
     final db = await appDatabase.database;
+    final safeCiphertext = await _offloadCiphertextIfNeeded(message.id, message.ciphertext);
+    final messageToSave = message.copyWith(ciphertext: safeCiphertext);
+
     await db.transaction((txn) async {
       await txn.insert(
         'messages',
-        message.toMap(),
+        messageToSave.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
 
@@ -155,27 +193,81 @@ class ChatRepository {
   /// Retrieves messages for a conversation ordered chronologically
   Future<List<MessageModel>> getMessages(String conversationId) async {
     final db = await appDatabase.database;
-    final maps = await db.query(
-      'messages',
-      where: 'conversation_id = ?',
-      whereArgs: [conversationId],
-      orderBy: 'timestamp ASC',
-    );
-    return maps.map((m) => MessageModel.fromMap(m)).toList();
+    try {
+      final maps = await db.query(
+        'messages',
+        where: 'conversation_id = ?',
+        whereArgs: [conversationId],
+        orderBy: 'timestamp ASC',
+      );
+      final list = <MessageModel>[];
+      for (final m in maps) {
+        var model = MessageModel.fromMap(m);
+        if (model.ciphertext.startsWith('FILE_REF:')) {
+          final resolved = await _resolveCiphertext(model.ciphertext);
+          model = model.copyWith(ciphertext: resolved);
+        }
+        list.add(model);
+      }
+      return list;
+    } catch (e) {
+      if (e.toString().contains('CursorWindow') || e.toString().contains('Row too big')) {
+        // Auto-recover from oversized rows in DB by sanitizing overgrown legacy rows
+        try {
+          await db.rawUpdate(
+            "UPDATE messages SET ciphertext = '{\"type\":\"ephemeral_media\",\"mediaType\":\"photo\",\"caption\":\"\",\"isDirect\":false,\"expired\":true}' WHERE conversation_id = ? AND length(ciphertext) > 50000",
+            [conversationId],
+          );
+          final retryMaps = await db.query(
+            'messages',
+            where: 'conversation_id = ?',
+            whereArgs: [conversationId],
+            orderBy: 'timestamp ASC',
+          );
+          return retryMaps.map((m) => MessageModel.fromMap(m)).toList();
+        } catch (_) {}
+      }
+      rethrow;
+    }
   }
 
   /// Retrieves the latest message for a conversation
   Future<MessageModel?> getLastMessage(String conversationId) async {
     final db = await appDatabase.database;
-    final maps = await db.query(
-      'messages',
-      where: 'conversation_id = ?',
-      whereArgs: [conversationId],
-      orderBy: 'timestamp DESC',
-      limit: 1,
-    );
-    if (maps.isEmpty) return null;
-    return MessageModel.fromMap(maps.first);
+    try {
+      final maps = await db.query(
+        'messages',
+        where: 'conversation_id = ?',
+        whereArgs: [conversationId],
+        orderBy: 'timestamp DESC',
+        limit: 1,
+      );
+      if (maps.isEmpty) return null;
+      var model = MessageModel.fromMap(maps.first);
+      if (model.ciphertext.startsWith('FILE_REF:')) {
+        final resolved = await _resolveCiphertext(model.ciphertext);
+        model = model.copyWith(ciphertext: resolved);
+      }
+      return model;
+    } catch (e) {
+      if (e.toString().contains('CursorWindow') || e.toString().contains('Row too big')) {
+        try {
+          await db.rawUpdate(
+            "UPDATE messages SET ciphertext = '{\"type\":\"ephemeral_media\",\"mediaType\":\"photo\",\"caption\":\"\",\"isDirect\":false,\"expired\":true}' WHERE conversation_id = ? AND length(ciphertext) > 50000",
+            [conversationId],
+          );
+          final retryMaps = await db.query(
+            'messages',
+            where: 'conversation_id = ?',
+            whereArgs: [conversationId],
+            orderBy: 'timestamp DESC',
+            limit: 1,
+          );
+          if (retryMaps.isNotEmpty) return MessageModel.fromMap(retryMaps.first);
+        } catch (_) {}
+      }
+      return null;
+    }
   }
 
   /// Offline local outbox: queries all messages with status == 'pending'

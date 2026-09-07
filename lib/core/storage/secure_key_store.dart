@@ -13,10 +13,12 @@ class SecureKeyStore {
   final AppDatabase? appDatabase;
   static const String _identityKey = 'mine_identity_bundle_v1';
   static const String _passcodeKey = 'mine_security_passcode_v1';
+  static const String _displayNameKey = 'mine_display_name_v1';
   static final Map<String, String> _webSessionCache = {};
 
   KeyPairBundle? _cachedIdentity;
   String? _cachedPasscode;
+  String? _cachedDisplayName;
 
   SecureKeyStore({
     FlutterSecureStorage? storage,
@@ -170,12 +172,50 @@ class SecureKeyStore {
     }
   }
 
+  /// Retrieves the saved user display name
+  Future<String?> getDisplayName() async {
+    if (_cachedDisplayName != null && _cachedDisplayName!.isNotEmpty) {
+      return _cachedDisplayName;
+    }
+
+    String? name;
+    try {
+      name = await _storage.read(key: _displayNameKey);
+    } catch (e) {
+      debugPrint('[SecureKeyStore] Display name secure read warning: $e');
+    }
+
+    if (name == null || name.isEmpty) {
+      name = _webSessionCache[_displayNameKey];
+    }
+
+    if (name != null && name.isNotEmpty) {
+      _cachedDisplayName = name;
+    }
+    return name;
+  }
+
+  /// Sets or updates the user display name
+  Future<void> setDisplayName(String name) async {
+    final clean = name.trim();
+    _cachedDisplayName = clean;
+    _webSessionCache[_displayNameKey] = clean;
+
+    try {
+      await _storage.write(key: _displayNameKey, value: clean);
+    } catch (e) {
+      debugPrint('[SecureKeyStore] Display name save error: $e');
+    }
+  }
+
   /// Cryptographic identity wipe for complete app reset
   Future<void> clearIdentity() async {
     _cachedIdentity = null;
     _cachedPasscode = null;
+    _cachedDisplayName = null;
     _webSessionCache.remove(_identityKey);
     _webSessionCache.remove(_passcodeKey);
+    _webSessionCache.remove(_displayNameKey);
 
     try {
       await appDatabase?.clearLocalIdentity();
@@ -184,6 +224,7 @@ class SecureKeyStore {
     try {
       await _storage.delete(key: _identityKey);
       await _storage.delete(key: _passcodeKey);
+      await _storage.delete(key: _displayNameKey);
     } catch (_) {}
   }
 }

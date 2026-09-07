@@ -9,6 +9,7 @@ enum MessageStatus {
 enum MessageType {
   text,
   image,
+  video,
   file,
 }
 
@@ -22,6 +23,8 @@ class MessageModel {
   final DateTime timestamp;
   final MessageStatus status;
   final MessageType messageType;
+  final int viewCount; // For ephemeral media (0 = unopened, 1 = viewed once / replay left, 2+ = expired)
+  final bool isExpired;
 
   // Transient memory-only fields (decrypted in memory, never written to disk in plaintext)
   String? decryptedContent;
@@ -35,12 +38,16 @@ class MessageModel {
     required this.timestamp,
     required this.status,
     required this.messageType,
+    this.viewCount = 0,
+    this.isExpired = false,
     this.decryptedContent,
     this.localAttachmentPath,
   });
 
   MessageModel copyWith({
     MessageStatus? status,
+    int? viewCount,
+    bool? isExpired,
     String? decryptedContent,
     String? localAttachmentPath,
   }) {
@@ -52,6 +59,8 @@ class MessageModel {
       timestamp: timestamp,
       status: status ?? this.status,
       messageType: messageType,
+      viewCount: viewCount ?? this.viewCount,
+      isExpired: isExpired ?? this.isExpired,
       decryptedContent: decryptedContent ?? this.decryptedContent,
       localAttachmentPath: localAttachmentPath ?? this.localAttachmentPath,
     );
@@ -66,6 +75,8 @@ class MessageModel {
       'timestamp': timestamp.toIso8601String(),
       'status': status.name,
       'message_type': messageType.name,
+      'view_count': viewCount,
+      'is_expired': isExpired ? 1 : 0,
     };
   }
 
@@ -84,6 +95,8 @@ class MessageModel {
         (e) => e.name == map['message_type'],
         orElse: () => MessageType.text,
       ),
+      viewCount: (map['view_count'] as num?)?.toInt() ?? 0,
+      isExpired: ((map['is_expired'] as num?)?.toInt() ?? 0) == 1,
     );
   }
 }

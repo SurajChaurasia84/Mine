@@ -32,6 +32,9 @@ class AppDatabase {
           onCreate: (db, version) async {
             await _createTables(db);
           },
+          onOpen: (db) async {
+            await _migrateTables(db);
+          },
         ),
       );
     }
@@ -48,7 +51,19 @@ class AppDatabase {
       onCreate: (db, version) async {
         await _createTables(db);
       },
+      onOpen: (db) async {
+        await _migrateTables(db);
+      },
     );
+  }
+
+  static Future<void> _migrateTables(DatabaseExecutor db) async {
+    try {
+      await db.execute('ALTER TABLE messages ADD COLUMN view_count INTEGER DEFAULT 0');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE messages ADD COLUMN is_expired INTEGER DEFAULT 0');
+    } catch (_) {}
   }
 
   static Future<void> _createTables(DatabaseExecutor db) async {
@@ -87,6 +102,8 @@ class AppDatabase {
         timestamp TEXT NOT NULL,
         status TEXT NOT NULL,
         message_type TEXT NOT NULL,
+        view_count INTEGER DEFAULT 0,
+        is_expired INTEGER DEFAULT 0,
         FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
       )
     ''');

@@ -64,6 +64,10 @@ class AppDatabase {
     try {
       await db.execute('ALTER TABLE messages ADD COLUMN is_expired INTEGER DEFAULT 0');
     } catch (_) {}
+    try {
+      // Prevent Android SQLite CursorWindow overflow (2MB limit) by sanitizing any legacy raw media blobs stored in messages table
+      await db.execute("UPDATE messages SET ciphertext = '{\"type\":\"ephemeral_media\",\"mediaType\":\"photo\",\"caption\":\"\",\"isDirect\":false,\"expired\":true}' WHERE length(ciphertext) > 80000");
+    } catch (_) {}
   }
 
   static Future<void> _createTables(DatabaseExecutor db) async {

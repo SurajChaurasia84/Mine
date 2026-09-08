@@ -435,15 +435,43 @@ class ConnectionManager extends ChangeNotifier {
     required String text,
     MessageType messageType = MessageType.text,
     bool saveHistory = false,
+    MessageModel? replyTo,
+    String? replySenderName,
   }) async {
     // Derive or retrieve shared session key
     final sessionKey = await _getOrDeriveSessionKey(contact);
 
-    // Pack text and senderName inside AES-256-GCM encrypted payload
-    final payloadMap = {
+    // Extract reply snippet & media type if replyTo is present
+    Map<String, dynamic>? replyToMap;
+    String? rText;
+    String? rMediaType;
+    if (replyTo != null) {
+      final ep = EphemeralMediaPayload.tryParse(replyTo.decryptedContent ?? '');
+      if (ep != null) {
+        rMediaType = ep.mediaType;
+        rText = (ep.caption != null && ep.caption!.trim().isNotEmpty)
+            ? ep.caption!
+            : (ep.mediaType == 'video' ? 'Video' : 'Photo');
+      } else {
+        rMediaType = replyTo.messageType == MessageType.video
+            ? 'video'
+            : (replyTo.messageType == MessageType.image ? 'photo' : 'text');
+        rText = replyTo.decryptedContent ?? '';
+      }
+      replyToMap = {
+        'id': replyTo.id,
+        'sender_name': replySenderName ?? 'Message',
+        'text': rText,
+        'media_type': rMediaType,
+      };
+    }
+
+    // Pack text, senderName, and reply_to inside AES-256-GCM encrypted payload
+    final payloadMap = <String, dynamic>{
       'type': 'text_msg',
       'text': text,
       if (_myDisplayName != null && _myDisplayName!.isNotEmpty) 'sender_name': _myDisplayName,
+      'reply_to': ?replyToMap,
     };
     final plaintextJson = jsonEncode(payloadMap);
 
@@ -466,6 +494,10 @@ class ConnectionManager extends ChangeNotifier {
       status: MessageStatus.pending,
       messageType: messageType,
       decryptedContent: text,
+      replyToMessageId: replyTo?.id,
+      replySenderName: replySenderName,
+      replyText: rText,
+      replyMediaType: rMediaType,
     );
 
     // Save strictly ciphertext in local database ONLY when saveHistory is true; otherwise keep in transient session memory
@@ -513,9 +545,28 @@ class ConnectionManager extends ChangeNotifier {
     required String mediaType, // 'photo' | 'video'
     String? caption,
     bool saveHistory = false,
+    MessageModel? replyTo,
+    String? replySenderName,
   }) async {
     final messageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${myIdentity.deviceId.hashCode.abs()}';
     final now = DateTime.now();
+
+    String? rText;
+    String? rMediaType;
+    if (replyTo != null) {
+      final ep = EphemeralMediaPayload.tryParse(replyTo.decryptedContent ?? '');
+      if (ep != null) {
+        rMediaType = ep.mediaType;
+        rText = (ep.caption != null && ep.caption!.trim().isNotEmpty)
+            ? ep.caption!
+            : (ep.mediaType == 'video' ? 'Video' : 'Photo');
+      } else {
+        rMediaType = replyTo.messageType == MessageType.video
+            ? 'video'
+            : (replyTo.messageType == MessageType.image ? 'photo' : 'text');
+        rText = replyTo.decryptedContent ?? '';
+      }
+    }
 
     // 1. Encrypt and upload payload (senderName is encrypted inside media payload)
     final mediaPayload = await ephemeralMediaService.encryptAndUpload(
@@ -523,6 +574,11 @@ class ConnectionManager extends ChangeNotifier {
       mediaType: mediaType,
       caption: caption,
       senderName: _myDisplayName,
+      messageId: messageId,
+      replyToMessageId: replyTo?.id,
+      replySenderName: replySenderName,
+      replyText: rText,
+      replyMediaType: rMediaType,
     );
     final payloadJson = mediaPayload.toJson();
 
@@ -546,6 +602,10 @@ class ConnectionManager extends ChangeNotifier {
       viewCount: 0,
       isExpired: false,
       decryptedContent: payloadJson,
+      replyToMessageId: replyTo?.id,
+      replySenderName: replySenderName,
+      replyText: rText,
+      replyMediaType: rMediaType,
     );
 
     if (saveHistory) {
@@ -806,17 +866,32 @@ class ConnectionManager extends ChangeNotifier {
       MessageType msgType = MessageType.text;
       String? senderNameFromEncryptedPayload;
       String displayContent = decryptedText;
+      String? replyToId;
+      String? replySender;
+      String? replyTxt;
+      String? replyMedia;
 
       final ephemeralPayload = EphemeralMediaPayload.tryParse(decryptedText);
       if (ephemeralPayload != null) {
         msgType = ephemeralPayload.mediaType == 'video' ? MessageType.video : MessageType.image;
         senderNameFromEncryptedPayload = ephemeralPayload.senderName;
+        replyToId = ephemeralPayload.replyToMessageId;
+        replySender = ephemeralPayload.replySenderName;
+        replyTxt = ephemeralPayload.replyText;
+        replyMedia = ephemeralPayload.replyMediaType;
       } else {
         try {
           final map = jsonDecode(decryptedText);
           if (map is Map<String, dynamic> && map.containsKey('text')) {
             displayContent = map['text'] as String? ?? '';
             senderNameFromEncryptedPayload = (map['sender_name'] ?? map['senderName']) as String?;
+            if (map['reply_to'] is Map) {
+              final rMap = map['reply_to'] as Map;
+              replyToId = rMap['id'] as String?;
+              replySender = rMap['sender_name'] as String?;
+              replyTxt = rMap['text'] as String?;
+              replyMedia = rMap['media_type'] as String?;
+            }
           }
         } catch (_) {
           // Plaintext string fallback
@@ -844,6 +919,10 @@ class ConnectionManager extends ChangeNotifier {
         viewCount: 0,
         isExpired: false,
         decryptedContent: displayContent,
+        replyToMessageId: replyToId,
+        replySenderName: replySender,
+        replyText: replyTxt,
+        replyMediaType: replyMedia,
       );
 
       final bool shouldSave = envelope.saveHistory == true;
@@ -895,9 +974,24 @@ class ConnectionManager extends ChangeNotifier {
       );
       String actualText = decrypted;
       try {
-        final map = jsonDecode(decrypted);
-        if (map is Map<String, dynamic> && map.containsKey('text')) {
-          actualText = map['text'] as String? ?? '';
+        final ep = EphemeralMediaPayload.tryParse(decrypted);
+        if (ep != null) {
+          message.replyToMessageId = ep.replyToMessageId;
+          message.replySenderName = ep.replySenderName;
+          message.replyText = ep.replyText;
+          message.replyMediaType = ep.replyMediaType;
+        } else {
+          final map = jsonDecode(decrypted);
+          if (map is Map<String, dynamic> && map.containsKey('text')) {
+            actualText = map['text'] as String? ?? '';
+            if (map['reply_to'] is Map) {
+              final rMap = map['reply_to'] as Map;
+              message.replyToMessageId = rMap['id'] as String?;
+              message.replySenderName = rMap['sender_name'] as String?;
+              message.replyText = rMap['text'] as String?;
+              message.replyMediaType = rMap['media_type'] as String?;
+            }
+          }
         }
       } catch (_) {}
       message.decryptedContent = actualText;

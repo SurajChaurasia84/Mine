@@ -601,6 +601,9 @@ class _ChatListScreenState extends State<ChatListScreen> {
             onPressed: () async {
               Navigator.pop(ctx);
               final chatRepo = context.read<ChatRepository>();
+              final connManager = context.read<ConnectionManager>();
+              final msgs = await chatRepo.getMessages(conv.id);
+              await connManager.ephemeralMediaService.deleteMessagesMedia(msgs);
               await chatRepo.deleteConversation(conv.id);
               _loadConversations();
             },
@@ -634,9 +637,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
           FilledButton(
             onPressed: () async {
               Navigator.pop(ctx);
+              final chatRepo = context.read<ChatRepository>();
+              final connManager = context.read<ConnectionManager>();
               final contactRepo = context.read<ContactRepository>();
+              final conv = await chatRepo.getOrCreateConversation(contact.id);
+              final msgs = await chatRepo.getMessages(conv.id);
+              await connManager.ephemeralMediaService.deleteMessagesMedia(msgs);
               await contactRepo.deleteContact(contact.id);
-              _loadConversations();
+              if (mounted) {
+                _loadConversations();
+              }
             },
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             child: const Text('Delete'),

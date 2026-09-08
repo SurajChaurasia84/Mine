@@ -134,9 +134,6 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
         _tempVideoFile!.deleteSync();
       } catch (_) {}
     }
-    try {
-      widget.rawBytes.fillRange(0, widget.rawBytes.length, 0);
-    } catch (_) {}
     super.dispose();
   }
 
@@ -453,6 +450,21 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
                                   child: Image.memory(
                                     widget.rawBytes,
                                     fit: BoxFit.contain,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return const Center(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.broken_image_rounded, color: Colors.white54, size: 48),
+                                            SizedBox(height: 8),
+                                            Text(
+                                              'Unable to display image',
+                                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ),
                               ),

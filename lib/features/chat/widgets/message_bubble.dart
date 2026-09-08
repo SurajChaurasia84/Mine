@@ -561,6 +561,7 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
         ? widget.payload!.mediaKeyBase64
         : widget.message.id;
 
+    // 1. Instant RAM check
     final cached = mediaService.getCachedMedia(cacheKey);
     if (cached != null) {
       if (mounted) {
@@ -574,6 +575,31 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
 
     if (widget.payload == null) return;
 
+    // 2. Fast local private app disk cache check (<2ms, 0 network data)
+    final localBytes = await mediaService.getCachedMediaAsync(cacheKey);
+    if (localBytes != null && localBytes.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _mediaBytes = localBytes;
+          _isLoading = false;
+        });
+      }
+      return;
+    }
+
+    // 3. If message ID was cached on disk
+    final localMsgBytes = await mediaService.getCachedMediaAsync(widget.message.id);
+    if (localMsgBytes != null && localMsgBytes.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _mediaBytes = localMsgBytes;
+          _isLoading = false;
+        });
+      }
+      return;
+    }
+
+    // 4. If not available on device yet, download and persist
     if (mounted) {
       setState(() {
         _isLoading = true;

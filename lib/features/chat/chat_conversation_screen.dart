@@ -384,10 +384,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     }
 
     try {
+      final finalBytes = previewResult.editedBytes ?? result.rawBytes;
       final sentMsg = await connManager.sendEphemeralMedia(
         contact: _currentContact,
         conversation: widget.conversation,
-        rawBytes: result.rawBytes,
+        rawBytes: finalBytes,
         mediaType: isVideo ? 'video' : 'photo',
         caption: previewResult.caption.isNotEmpty ? previewResult.caption : null,
         saveHistory: _saveHistory,
@@ -518,10 +519,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         _scrollToBottom(animate: true);
       }
 
+      final finalBytes = previewResult.editedBytes ?? rawBytes;
       final sentMsg = await connManager.sendEphemeralMedia(
         contact: _currentContact,
         conversation: widget.conversation,
-        rawBytes: rawBytes,
+        rawBytes: finalBytes,
         mediaType: actualIsVideo ? 'video' : 'photo',
         caption: previewResult.caption.isNotEmpty ? previewResult.caption : null,
         saveHistory: _saveHistory,

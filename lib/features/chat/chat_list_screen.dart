@@ -6,6 +6,7 @@ import '../../app/theme.dart';
 import '../../core/crypto/key_pair_bundle.dart';
 import '../../core/utils/avatar_colors.dart';
 import '../../core/utils/date_formatter.dart';
+import '../../data/models/contact_model.dart';
 import '../../data/models/conversation_model.dart';
 import '../../data/models/message_model.dart';
 import '../../data/repositories/chat_repository.dart';
@@ -498,6 +499,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                                   ],
                                 ),
                                 onTap: () => _openChat(conv),
+                                onLongPress: () => _showConversationOptions(conv),
                               );
                             },
                           ),
@@ -518,6 +520,128 @@ class _ChatListScreenState extends State<ChatListScreen> {
           color: Color(0xFF00382B),
           size: 24,
         ),
+      ),
+    );
+  }
+
+  void _showConversationOptions(ConversationModel conv) {
+    final contact = conv.contact;
+    if (contact == null) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: MineTheme.surfaceDark,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: UserAvatar(nameOrId: contact.nickname, radius: 18),
+                title: Text(contact.nickname, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(contact.peerDeviceId, style: const TextStyle(fontSize: 12, color: MineTheme.textMuted)),
+              ),
+              const Divider(color: Colors.white12),
+              ListTile(
+                leading: const Icon(Icons.cleaning_services_outlined, color: MineTheme.textLight),
+                title: const Text('Clear Chat'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmClearChat(conv);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                title: const Text('Delete Contact', style: TextStyle(color: Colors.redAccent)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmDeleteContact(contact);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _confirmClearChat(ConversationModel conv) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MineTheme.surfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Clear this chat?',
+          style: TextStyle(color: MineTheme.textLight, fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        content: const Text(
+          'Are you sure you want to clear all messages in this chat? This cannot be undone.',
+          style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: MineTheme.textMuted)),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final chatRepo = context.read<ChatRepository>();
+              await chatRepo.deleteConversation(conv.id);
+              _loadConversations();
+            },
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('Clear Chat'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteContact(ContactModel contact) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MineTheme.surfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Delete ${contact.nickname}?',
+          style: const TextStyle(color: MineTheme.textLight, fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        content: const Text(
+          'This will delete the contact and all associated chat messages from your device.',
+          style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: MineTheme.textMuted)),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final contactRepo = context.read<ContactRepository>();
+              await contactRepo.deleteContact(contact.id);
+              _loadConversations();
+            },
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
   }

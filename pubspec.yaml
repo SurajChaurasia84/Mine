@@ -33,6 +33,7 @@ dependencies:
   camera: ^0.12.1
   image: ^4.9.2
   google_fonts: ^8.2.1
+  pro_image_editor: ^13.5.0
 
 dev_dependencies:
   flutter_test:

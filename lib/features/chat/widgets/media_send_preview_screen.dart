@@ -319,6 +319,11 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
                       _currentBytes,
                       fit: BoxFit.contain,
                       gaplessPlayback: true,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Center(
+                          child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 48),
+                        );
+                      },
                     ),
             ),
 

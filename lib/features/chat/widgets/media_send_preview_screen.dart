@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pro_image_editor/pro_image_editor.dart';
 import 'package:video_player/video_player.dart';
@@ -100,6 +100,7 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
 
   @override
   void dispose() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: SystemUiOverlay.values);
     _captionController.dispose();
     _focusNode.dispose();
     _videoController?.removeListener(_onVideoUpdate);
@@ -110,6 +111,22 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
       } catch (_) {}
     }
     super.dispose();
+  }
+
+  double _cachedTopPadding = 0.0;
+  double _cachedBottomPadding = 0.0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final top = MediaQuery.paddingOf(context).top;
+    if (top > _cachedTopPadding) {
+      _cachedTopPadding = top;
+    }
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    if (bottom > _cachedBottomPadding) {
+      _cachedBottomPadding = bottom;
+    }
   }
 
   void _toggleOverlay() {
@@ -256,253 +273,286 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
     final bool isVideo = widget.mediaType == 'video';
     final bool isPlaying = _videoController != null && _videoController!.value.isPlaying;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      resizeToAvoidBottomInset: false,
-      body: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _toggleOverlay,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // 1. Center Image / Video Area
-            Center(
-              child: isVideo
-                  ? (_isVideoInitialized && _videoController != null
-                      ? AspectRatio(
-                          aspectRatio: _videoController!.value.aspectRatio,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              VideoPlayer(_videoController!),
-                              AnimatedOpacity(
-                                duration: const Duration(milliseconds: 200),
-                                opacity: _isOverlayVisible ? 1.0 : 0.0,
-                                child: IgnorePointer(
-                                  ignoring: !_isOverlayVisible,
+    final currentTop = MediaQuery.paddingOf(context).top;
+    if (currentTop > _cachedTopPadding) {
+      _cachedTopPadding = currentTop;
+    }
+    final topPadding = _cachedTopPadding > 0 ? _cachedTopPadding : 28.0;
+
+    final currentBottom = MediaQuery.paddingOf(context).bottom;
+    if (currentBottom > _cachedBottomPadding) {
+      _cachedBottomPadding = currentBottom;
+    }
+    final bottomPadding = _cachedBottomPadding > 0 ? _cachedBottomPadding : 12.0;
+
+    final overlayStyle = SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: _isOverlayVisible ? Brightness.light : Brightness.dark,
+      systemNavigationBarColor: Colors.black,
+      systemNavigationBarIconBrightness: _isOverlayVisible ? Brightness.light : Brightness.dark,
+    );
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlayStyle,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        resizeToAvoidBottomInset: false,
+        body: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggleOverlay,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 1. Center Image / Video Area (Fixed full position, no jump)
+              Positioned.fill(
+                child: Center(
+                  child: isVideo
+                      ? (_isVideoInitialized && _videoController != null
+                          ? AspectRatio(
+                              aspectRatio: _videoController!.value.aspectRatio,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  VideoPlayer(_videoController!),
+                                  AnimatedOpacity(
+                                    duration: const Duration(milliseconds: 180),
+                                    curve: Curves.easeInOut,
+                                    opacity: _isOverlayVisible ? 1.0 : 0.0,
+                                    child: IgnorePointer(
+                                      ignoring: !_isOverlayVisible,
+                                      child: Material(
+                                        color: Colors.transparent,
+                                        child: InkWell(
+                                          borderRadius: BorderRadius.circular(40),
+                                          onTap: _toggleVideoPlayback,
+                                          child: Container(
+                                            width: 72,
+                                            height: 72,
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withAlpha(140),
+                                              shape: BoxShape.circle,
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.black.withAlpha(80),
+                                                  blurRadius: 12,
+                                                  spreadRadius: 2,
+                                                ),
+                                              ],
+                                            ),
+                                            child: Icon(
+                                              isPlaying
+                                                  ? Icons.pause_rounded
+                                                  : Icons.play_arrow_rounded,
+                                              color: Colors.white,
+                                              size: 46,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : const CircularProgressIndicator(color: MineTheme.accentGreen))
+                      : Image.memory(
+                          _currentBytes,
+                          fit: BoxFit.contain,
+                          gaplessPlayback: true,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Center(
+                              child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 48),
+                            );
+                          },
+                        ),
+                ),
+              ),
+
+              // 2. Top Bar (Close button, Recipient Header, Edit and Reset Tools)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeInOut,
+                  opacity: _isOverlayVisible ? 1.0 : 0.0,
+                  child: IgnorePointer(
+                    ignoring: !_isOverlayVisible,
+                    child: Container(
+                      padding: EdgeInsets.only(
+                        top: topPadding + 6,
+                        left: 6,
+                        right: 12,
+                        bottom: 10,
+                      ),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.black87, Colors.transparent],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            widget.recipientName.isNotEmpty ? widget.recipientName : 'Preview',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const Spacer(),
+
+                          // Action Icons for Photo Editing
+                          if (!isVideo) ...[
+                            IconButton(
+                              tooltip: 'Edit photo',
+                              icon: const Icon(Icons.edit_rounded, color: Colors.white, size: 24),
+                              onPressed: _openProImageEditor,
+                            ),
+                            if (_hasEdits)
+                              IconButton(
+                                tooltip: 'Reset to original',
+                                icon: const Icon(Icons.restart_alt_rounded, color: Colors.orangeAccent, size: 24),
+                                onPressed: _resetToOriginal,
+                              ),
+                          ],
+
+                          if (isVideo)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withAlpha(30),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.videocam_rounded, color: Colors.white, size: 15),
+                                  SizedBox(width: 6),
+                                  Text('Video', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // 3. Bottom Overlay Bar (Caption Input + Send Button)
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeInOut,
+                  opacity: _isOverlayVisible ? 1.0 : 0.0,
+                  child: IgnorePointer(
+                    ignoring: !_isOverlayVisible,
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        bottom: MediaQuery.of(context).viewInsets.bottom,
+                      ),
+                      child: Container(
+                        padding: EdgeInsets.only(
+                          left: 12,
+                          right: 12,
+                          top: 10,
+                          bottom: MediaQuery.of(context).viewInsets.bottom > 0
+                              ? 8
+                              : bottomPadding + 8,
+                        ),
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.transparent, Colors.black87],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isVideo) _buildVideoScrubber(),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                // Caption Text Field
+                                Expanded(
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: MineTheme.surfaceDark.withAlpha(240),
+                                      borderRadius: BorderRadius.circular(24),
+                                      border: Border.all(color: Colors.white12, width: 1),
+                                    ),
+                                    child: TextField(
+                                      controller: _captionController,
+                                      focusNode: _focusNode,
+                                      maxLines: 4,
+                                      minLines: 1,
+                                      textCapitalization: TextCapitalization.sentences,
+                                      style: const TextStyle(color: Colors.white, fontSize: 15),
+                                      decoration: const InputDecoration(
+                                        hintText: 'Add a caption...',
+                                        hintStyle: TextStyle(color: Colors.white54, fontSize: 15),
+                                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                        border: InputBorder.none,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+
+                                // Send Button
+                                Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: const BoxDecoration(
+                                    color: MineTheme.accentGreen,
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black45,
+                                        blurRadius: 6,
+                                        offset: Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
                                   child: Material(
                                     color: Colors.transparent,
                                     child: InkWell(
-                                      borderRadius: BorderRadius.circular(40),
-                                      onTap: _toggleVideoPlayback,
-                                      child: Container(
-                                        width: 72,
-                                        height: 72,
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withAlpha(140),
-                                          shape: BoxShape.circle,
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black.withAlpha(80),
-                                              blurRadius: 12,
-                                              spreadRadius: 2,
-                                            ),
-                                          ],
-                                        ),
+                                      customBorder: const CircleBorder(),
+                                      onTap: _handleSend,
+                                      child: const Center(
                                         child: Icon(
-                                          isPlaying
-                                              ? Icons.pause_rounded
-                                              : Icons.play_arrow_rounded,
-                                          color: Colors.white,
-                                          size: 46,
+                                          Icons.send_rounded,
+                                          color: Color(0xFF00382B),
+                                          size: 22,
                                         ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : const CircularProgressIndicator(color: MineTheme.accentGreen))
-                  : Image.memory(
-                      _currentBytes,
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                      errorBuilder: (context, error, stackTrace) {
-                        return const Center(
-                          child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 48),
-                        );
-                      },
-                    ),
-            ),
-
-            // 2. Top Bar (Close button, Recipient Header, Edit and Reset Tools)
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 200),
-              top: _isOverlayVisible ? 0 : -100,
-              left: 0,
-              right: 0,
-              child: Container(
-                padding: EdgeInsets.only(
-                  top: MediaQuery.of(context).padding.top + 6,
-                  left: 6,
-                  right: 12,
-                  bottom: 10,
-                ),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Colors.black87, Colors.transparent],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    const SizedBox(width: 2),
-                    Text(
-                      widget.recipientName.isNotEmpty ? widget.recipientName : 'Preview',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const Spacer(),
-
-                    // Action Icons for Photo Editing
-                    if (!isVideo) ...[
-                      // Open Full Pro Image Editor (Crop, Rotate, Filter, Draw, Text, etc.)
-                      IconButton(
-                        tooltip: 'Edit photo',
-                        icon: const Icon(Icons.edit_rounded, color: Colors.white, size: 24),
-                        onPressed: _openProImageEditor,
-                      ),
-
-                      // Reset button (Visible when modified)
-                      if (_hasEdits)
-                        IconButton(
-                          tooltip: 'Reset to original',
-                          icon: const Icon(Icons.restart_alt_rounded, color: Colors.orangeAccent, size: 24),
-                          onPressed: _resetToOriginal,
-                        ),
-                    ],
-
-                    if (isVideo)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withAlpha(30),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.videocam_rounded, color: Colors.white, size: 15),
-                            SizedBox(width: 6),
-                            Text('Video', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-
-            // 3. Bottom Overlay Bar (Caption Input + Send Button)
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: AnimatedSlide(
-                duration: const Duration(milliseconds: 200),
-                offset: _isOverlayVisible ? Offset.zero : const Offset(0, 1.5),
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    bottom: MediaQuery.of(context).viewInsets.bottom,
-                  ),
-                  child: Container(
-                    padding: EdgeInsets.only(
-                      left: 12,
-                      right: 12,
-                      top: 10,
-                      bottom: MediaQuery.of(context).viewInsets.bottom > 0
-                          ? 8
-                          : MediaQuery.of(context).padding.bottom + 12,
-                    ),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Colors.transparent, Colors.black87],
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                      ),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isVideo) _buildVideoScrubber(),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            // Caption Text Field
-                            Expanded(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: MineTheme.surfaceDark.withAlpha(240),
-                                  borderRadius: BorderRadius.circular(24),
-                                  border: Border.all(color: Colors.white12, width: 1),
-                                ),
-                                child: TextField(
-                                  controller: _captionController,
-                                  focusNode: _focusNode,
-                                  maxLines: 4,
-                                  minLines: 1,
-                                  textCapitalization: TextCapitalization.sentences,
-                                  style: const TextStyle(color: Colors.white, fontSize: 15),
-                                  decoration: const InputDecoration(
-                                    hintText: 'Add a caption...',
-                                    hintStyle: TextStyle(color: Colors.white54, fontSize: 15),
-                                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                                    border: InputBorder.none,
-                                  ),
-                                ),
-                              ),
+                              ],
                             ),
-                            const SizedBox(width: 8),
-
-                            // Send Button
-                            Container(
-                              width: 48,
-                              height: 48,
-                              decoration: const BoxDecoration(
-                                color: MineTheme.accentGreen,
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black45,
-                                    blurRadius: 6,
-                                    offset: Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  customBorder: const CircleBorder(),
-                                  onTap: _handleSend,
-                                  child: const Center(
-                                    child: Icon(
-                                      Icons.send_rounded,
-                                      color: Color(0xFF00382B),
-                                      size: 22,
-                                    ),
-                                  ),
-                                  ),
-                                ),
-                              ),
                           ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

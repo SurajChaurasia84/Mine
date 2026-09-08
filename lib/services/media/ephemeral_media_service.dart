@@ -13,6 +13,10 @@ class EphemeralMediaPayload {
   final String? inlineCiphertext; // Optional fallback for fast local/offline delivery
   final String? caption;
   final String? senderName;
+  final String? replyToMessageId;
+  final String? replySenderName;
+  final String? replyText;
+  final String? replyMediaType;
 
   EphemeralMediaPayload({
     required this.mediaType,
@@ -22,6 +26,10 @@ class EphemeralMediaPayload {
     this.inlineCiphertext,
     this.caption,
     this.senderName,
+    this.replyToMessageId,
+    this.replySenderName,
+    this.replyText,
+    this.replyMediaType,
   });
 
   Map<String, dynamic> toMap() {
@@ -34,10 +42,22 @@ class EphemeralMediaPayload {
       if (inlineCiphertext != null) 'data': inlineCiphertext,
       if (caption != null && caption!.isNotEmpty) 'caption': caption,
       if (senderName != null && senderName!.isNotEmpty) 'sender_name': senderName,
+      if (replyToMessageId != null || replySenderName != null || replyText != null)
+        'reply_to': {
+          if (replyToMessageId != null) 'id': replyToMessageId,
+          if (replySenderName != null) 'sender_name': replySenderName,
+          if (replyText != null) 'text': replyText,
+          if (replyMediaType != null) 'media_type': replyMediaType,
+        },
     };
   }
 
   factory EphemeralMediaPayload.fromMap(Map<String, dynamic> map) {
+    Map<String, dynamic>? replyMap;
+    if (map['reply_to'] is Map) {
+      replyMap = Map<String, dynamic>.from(map['reply_to'] as Map);
+    }
+
     return EphemeralMediaPayload(
       mediaType: map['media_type'] as String? ?? 'photo',
       url: map['url'] as String? ?? '',
@@ -46,6 +66,10 @@ class EphemeralMediaPayload {
       inlineCiphertext: map['data'] as String?,
       caption: map['caption'] as String?,
       senderName: (map['sender_name'] ?? map['senderName']) as String?,
+      replyToMessageId: replyMap?['id'] as String?,
+      replySenderName: replyMap?['sender_name'] as String?,
+      replyText: replyMap?['text'] as String?,
+      replyMediaType: replyMap?['media_type'] as String?,
     );
   }
 
@@ -64,6 +88,27 @@ class EphemeralMediaPayload {
 
 class EphemeralMediaService {
   final AesGcm _aesGcm = AesGcm.with256bits();
+  final Map<String, Uint8List> _memoryCache = {};
+
+  /// Caches decrypted media bytes in memory
+  void cacheMedia(String key, Uint8List bytes) {
+    _memoryCache[key] = bytes;
+  }
+
+  /// Retrieves cached media bytes if present
+  Uint8List? getCachedMedia(String key) {
+    return _memoryCache[key];
+  }
+
+  /// Destroys in-memory media buffers for temporary/transient chats
+  void clearTransientCache() {
+    _memoryCache.forEach((_, buffer) {
+      try {
+        buffer.fillRange(0, buffer.length, 0);
+      } catch (_) {}
+    });
+    _memoryCache.clear();
+  }
 
   /// Generates a cryptographically secure 256-bit symmetric media key
   List<int> generateMediaKey() {
@@ -99,6 +144,11 @@ class EphemeralMediaService {
     required String mediaType, // 'photo' or 'video'
     String? caption,
     String? senderName,
+    String? messageId,
+    String? replyToMessageId,
+    String? replySenderName,
+    String? replyText,
+    String? replyMediaType,
   }) async {
     final processedBytes = mediaType == 'photo' ? _optimizePhotoBytes(rawBytes) : rawBytes;
     final keyBytes = generateMediaKey();
@@ -144,6 +194,12 @@ class EphemeralMediaService {
       }
     }
 
+    // Cache the original processed bytes under the media key and message ID
+    _memoryCache[keyBase64] = processedBytes;
+    if (messageId != null) {
+      _memoryCache[messageId] = processedBytes;
+    }
+
     return EphemeralMediaPayload(
       mediaType: mediaType,
       url: blobUrl,
@@ -152,6 +208,10 @@ class EphemeralMediaService {
       inlineCiphertext: inlineData,
       caption: caption,
       senderName: senderName,
+      replyToMessageId: replyToMessageId,
+      replySenderName: replySenderName,
+      replyText: replyText,
+      replyMediaType: replyMediaType,
     );
   }
 
@@ -199,6 +259,25 @@ class EphemeralMediaService {
     } catch (_) {}
 
     return '';
+  }
+
+  /// Gets media from in-memory cache or downloads and decrypts into RAM
+  Future<Uint8List> getOrDownloadMedia(EphemeralMediaPayload payload, {String? messageId}) async {
+    if (payload.mediaKeyBase64.isNotEmpty && _memoryCache.containsKey(payload.mediaKeyBase64)) {
+      return _memoryCache[payload.mediaKeyBase64]!;
+    }
+    if (messageId != null && _memoryCache.containsKey(messageId)) {
+      return _memoryCache[messageId]!;
+    }
+
+    final bytes = await downloadAndDecrypt(payload);
+    if (payload.mediaKeyBase64.isNotEmpty) {
+      _memoryCache[payload.mediaKeyBase64] = bytes;
+    }
+    if (messageId != null) {
+      _memoryCache[messageId] = bytes;
+    }
+    return bytes;
   }
 
   /// Downloads ciphertext blob and decrypts directly into volatile memory (RAM)

@@ -1,7 +1,7 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import '../../../app/theme.dart';
@@ -125,6 +125,7 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
   void dispose() {
     _transController.removeListener(_onTransformationChanged);
     _transController.dispose();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: SystemUiOverlay.values);
     _dismissAnimController.dispose();
     _zoomAnimController.dispose();
     _videoController?.removeListener(_onVideoUpdate);
@@ -135,6 +136,22 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
       } catch (_) {}
     }
     super.dispose();
+  }
+
+  double _cachedTopPadding = 0.0;
+  double _cachedBottomPadding = 0.0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final top = MediaQuery.paddingOf(context).top;
+    if (top > _cachedTopPadding) {
+      _cachedTopPadding = top;
+    }
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    if (bottom > _cachedBottomPadding) {
+      _cachedBottomPadding = bottom;
+    }
   }
 
   void _toggleOverlay() {
@@ -355,250 +372,283 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
     final double bgOpacity = (1.0 - dragProgress).clamp(0.0, 1.0);
     final double contentScale = (1.0 - (_dragOffsetY.abs() / (screenSize.height * 1.5))).clamp(0.8, 1.0);
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) {
-          Navigator.pop(context, true);
-        }
-      },
-      child: Scaffold(
-        backgroundColor: Colors.black.withAlpha((bgOpacity * 255).toInt()),
-        body: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _toggleOverlay,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // Media Content Area
-              Center(
-                child: Transform.translate(
-                  offset: Offset(0, _dragOffsetY),
-                  child: Transform.scale(
-                    scale: contentScale,
-                    child: isVideo
-                        ? GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onVerticalDragStart: _onVideoVerticalDragStart,
-                            onVerticalDragUpdate: _onVideoVerticalDragUpdate,
-                            onVerticalDragEnd: _onVideoVerticalDragEnd,
-                            child: (_isVideoInitialized && _videoController != null
-                                ? AspectRatio(
-                                    aspectRatio: _videoController!.value.aspectRatio,
-                                    child: Stack(
-                                      alignment: Alignment.center,
-                                      children: [
-                                        VideoPlayer(_videoController!),
-                                        AnimatedOpacity(
-                                          duration: const Duration(milliseconds: 200),
-                                          opacity: (_isOverlayVisible && _dragOffsetY.abs() < 20) ? 1.0 : 0.0,
-                                          child: IgnorePointer(
-                                            ignoring: !_isOverlayVisible || _dragOffsetY.abs() >= 20,
-                                            child: Material(
-                                              color: Colors.transparent,
-                                              child: InkWell(
-                                                borderRadius: BorderRadius.circular(40),
-                                                onTap: _toggleVideoPlayback,
-                                                child: Container(
-                                                  width: 72,
-                                                  height: 72,
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.black.withAlpha(140),
-                                                    shape: BoxShape.circle,
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black.withAlpha(80),
-                                                        blurRadius: 12,
-                                                        spreadRadius: 2,
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Icon(
-                                                    isPlaying
-                                                        ? Icons.pause_rounded
-                                                        : Icons.play_arrow_rounded,
-                                                    color: Colors.white,
-                                                    size: 46,
+    final currentTop = MediaQuery.paddingOf(context).top;
+    if (currentTop > _cachedTopPadding) {
+      _cachedTopPadding = currentTop;
+    }
+    final topPadding = _cachedTopPadding > 0 ? _cachedTopPadding : 28.0;
+
+    final currentBottom = MediaQuery.paddingOf(context).bottom;
+    if (currentBottom > _cachedBottomPadding) {
+      _cachedBottomPadding = currentBottom;
+    }
+    final bottomPadding = _cachedBottomPadding > 0 ? _cachedBottomPadding : 16.0;
+
+    final bool showOverlays = _isOverlayVisible && _dragOffsetY.abs() < 20;
+
+    final overlayStyle = SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: showOverlays ? Brightness.light : Brightness.dark,
+      systemNavigationBarColor: Colors.black,
+      systemNavigationBarIconBrightness: showOverlays ? Brightness.light : Brightness.dark,
+    );
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlayStyle,
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) {
+            Navigator.pop(context, true);
+          }
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black.withAlpha((bgOpacity * 255).toInt()),
+          body: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleOverlay,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Media Content Area
+                Center(
+                  child: Transform.translate(
+                    offset: Offset(0, _dragOffsetY),
+                    child: Transform.scale(
+                      scale: contentScale,
+                      child: isVideo
+                          ? GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onVerticalDragStart: _onVideoVerticalDragStart,
+                              onVerticalDragUpdate: _onVideoVerticalDragUpdate,
+                              onVerticalDragEnd: _onVideoVerticalDragEnd,
+                              child: (_isVideoInitialized && _videoController != null
+                                  ? AspectRatio(
+                                      aspectRatio: _videoController!.value.aspectRatio,
+                                      child: Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                          VideoPlayer(_videoController!),
+                                          AnimatedOpacity(
+                                            duration: const Duration(milliseconds: 180),
+                                            curve: Curves.easeInOut,
+                                            opacity: showOverlays ? 1.0 : 0.0,
+                                            child: IgnorePointer(
+                                              ignoring: !showOverlays,
+                                              child: Material(
+                                                color: Colors.transparent,
+                                                child: InkWell(
+                                                  borderRadius: BorderRadius.circular(40),
+                                                  onTap: _toggleVideoPlayback,
+                                                  child: Container(
+                                                    width: 72,
+                                                    height: 72,
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.black.withAlpha(140),
+                                                      shape: BoxShape.circle,
+                                                      boxShadow: [
+                                                        BoxShadow(
+                                                          color: Colors.black.withAlpha(80),
+                                                          blurRadius: 12,
+                                                          spreadRadius: 2,
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    child: Icon(
+                                                      isPlaying
+                                                          ? Icons.pause_rounded
+                                                          : Icons.play_arrow_rounded,
+                                                      color: Colors.white,
+                                                      size: 46,
+                                                    ),
                                                   ),
                                                 ),
                                               ),
                                             ),
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
+                                    )
+                                  : const CircularProgressIndicator(color: Colors.white)),
+                            )
+                          : GestureDetector(
+                              onDoubleTapDown: (details) => _doubleTapDetails = details,
+                              onDoubleTap: _handleDoubleTap,
+                              child: InteractiveViewer(
+                                transformationController: _transController,
+                                minScale: 1.0,
+                                maxScale: 5.0,
+                                panEnabled: _isZoomed,
+                                scaleEnabled: true,
+                                boundaryMargin: EdgeInsets.zero,
+                                onInteractionStart: _onPhotoInteractionStart,
+                                onInteractionUpdate: _onPhotoInteractionUpdate,
+                                onInteractionEnd: _onPhotoInteractionEnd,
+                                child: SizedBox(
+                                  width: screenSize.width,
+                                  height: screenSize.height,
+                                  child: Center(
+                                    child: Image.memory(
+                                      widget.rawBytes,
+                                      fit: BoxFit.contain,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        return const Center(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.broken_image_rounded, color: Colors.white54, size: 48),
+                                              SizedBox(height: 8),
+                                              Text(
+                                                'Unable to display image',
+                                                style: TextStyle(color: Colors.white70, fontSize: 13),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      },
                                     ),
-                                  )
-                                : const CircularProgressIndicator(color: Colors.white)),
-                          )
-                        : GestureDetector(
-                            onDoubleTapDown: (details) => _doubleTapDetails = details,
-                            onDoubleTap: _handleDoubleTap,
-                            child: InteractiveViewer(
-                              transformationController: _transController,
-                              minScale: 1.0,
-                              maxScale: 5.0,
-                              panEnabled: _isZoomed,
-                              scaleEnabled: true,
-                              boundaryMargin: EdgeInsets.zero,
-                              onInteractionStart: _onPhotoInteractionStart,
-                              onInteractionUpdate: _onPhotoInteractionUpdate,
-                              onInteractionEnd: _onPhotoInteractionEnd,
-                              child: SizedBox(
-                                width: screenSize.width,
-                                height: screenSize.height,
-                                child: Center(
-                                  child: Image.memory(
-                                    widget.rawBytes,
-                                    fit: BoxFit.contain,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return const Center(
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(Icons.broken_image_rounded, color: Colors.white54, size: 48),
-                                            SizedBox(height: 8),
-                                            Text(
-                                              'Unable to display image',
-                                              style: TextStyle(color: Colors.white70, fontSize: 13),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    },
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                  ),
-                ),
-              ),
-
-              // Top overlay bar with sender name and close button
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 200),
-                top: (_isOverlayVisible && _dragOffsetY.abs() < 20) ? 0 : -80,
-                left: 0,
-                right: 0,
-                child: Opacity(
-                  opacity: bgOpacity,
-                  child: Container(
-                    padding: EdgeInsets.only(
-                      top: MediaQuery.of(context).padding.top + 8,
-                      left: 16,
-                      right: 16,
-                      bottom: 12,
-                    ),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Colors.black87, Colors.transparent],
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black.withAlpha(150),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                widget.mediaType == 'video' ? Icons.videocam : Icons.photo_camera,
-                                color: Colors.white,
-                                size: 16,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                widget.senderName,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Spacer(),
-                        // Close Button
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context, true),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withAlpha(150),
-                              shape: BoxShape.circle,
-                            ),
-                            padding: const EdgeInsets.all(8),
-                            child: const Icon(
-                              Icons.close_rounded,
-                              color: Colors.white,
-                              size: 24,
-                            ),
-                          ),
-                        ),
-                      ],
                     ),
                   ),
                 ),
-              ),
 
-              // Bottom Bar (Video Progress Scrubber + Caption)
-              if ((widget.caption != null && widget.caption!.isNotEmpty) || widget.mediaType == 'video')
-                AnimatedPositioned(
-                  duration: const Duration(milliseconds: 200),
-                  bottom: (_isOverlayVisible && _dragOffsetY.abs() < 20) ? 0 : -140,
+                // Top overlay bar with sender name and close button
+                Positioned(
+                  top: 0,
                   left: 0,
                   right: 0,
-                  child: Opacity(
-                    opacity: bgOpacity,
-                    child: Container(
-                      padding: EdgeInsets.only(
-                        left: 16,
-                        right: 16,
-                        top: 14,
-                        bottom: MediaQuery.of(context).padding.bottom + 16,
-                      ),
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Colors.transparent, Colors.black87],
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeInOut,
+                    opacity: showOverlays ? bgOpacity : 0.0,
+                    child: IgnorePointer(
+                      ignoring: !showOverlays,
+                      child: Container(
+                        padding: EdgeInsets.only(
+                          top: topPadding + 8,
+                          left: 16,
+                          right: 16,
+                          bottom: 12,
                         ),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (widget.mediaType == 'video') _buildVideoScrubber(),
-                          if (widget.caption != null && widget.caption!.isNotEmpty) ...[
-                            const SizedBox(height: 8),
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.black87, Colors.transparent],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                               decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(16),
+                                color: Colors.black.withAlpha(150),
+                                borderRadius: BorderRadius.circular(20),
                               ),
-                              child: Text(
-                                widget.caption!,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    widget.mediaType == 'video' ? Icons.videocam : Icons.photo_camera,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    widget.senderName,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Spacer(),
+                            // Close Button
+                            GestureDetector(
+                              onTap: () => Navigator.pop(context, true),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withAlpha(150),
+                                  shape: BoxShape.circle,
+                                ),
+                                padding: const EdgeInsets.all(8),
+                                child: const Icon(
+                                  Icons.close_rounded,
                                   color: Colors.white,
-                                  fontSize: 14.5,
-                                  fontWeight: FontWeight.w500,
+                                  size: 24,
                                 ),
                               ),
                             ),
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-            ],
+
+                // Bottom Bar (Video Progress Scrubber + Caption)
+                if ((widget.caption != null && widget.caption!.isNotEmpty) || widget.mediaType == 'video')
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeInOut,
+                      opacity: showOverlays ? bgOpacity : 0.0,
+                      child: IgnorePointer(
+                        ignoring: !showOverlays,
+                        child: Container(
+                          padding: EdgeInsets.only(
+                            left: 16,
+                            right: 16,
+                            top: 14,
+                            bottom: bottomPadding + 8,
+                          ),
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Colors.transparent, Colors.black87],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (widget.mediaType == 'video') _buildVideoScrubber(),
+                              if (widget.caption != null && widget.caption!.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black54,
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Text(
+                                    widget.caption!,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

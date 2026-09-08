@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../app/theme.dart';
+import '../../../data/models/message_model.dart';
+import '../../../services/media/ephemeral_media_service.dart';
 import 'emoji_picker_widget.dart';
 
 class ChatInputBar extends StatefulWidget {
@@ -7,6 +9,9 @@ class ChatInputBar extends StatefulWidget {
   final VoidCallback? onAttach;
   final VoidCallback? onCamera;
   final VoidCallback? onTap;
+  final MessageModel? replyMessage;
+  final String? replySenderName;
+  final VoidCallback? onCancelReply;
 
   const ChatInputBar({
     super.key,
@@ -14,6 +19,9 @@ class ChatInputBar extends StatefulWidget {
     this.onAttach,
     this.onCamera,
     this.onTap,
+    this.replyMessage,
+    this.replySenderName,
+    this.onCancelReply,
   });
 
   @override
@@ -29,6 +37,24 @@ class ChatInputBarState extends State<ChatInputBar> {
   void hideEmoji() {
     if (_showEmoji) {
       setState(() => _showEmoji = false);
+    }
+  }
+
+  void requestInputFocus() {
+    if (!_focusNode.hasFocus) {
+      _focusNode.requestFocus();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatInputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.replyMessage != null && oldWidget.replyMessage != widget.replyMessage) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_focusNode.hasFocus) {
+          _focusNode.requestFocus();
+        }
+      });
     }
   }
 
@@ -120,6 +146,97 @@ class ChatInputBarState extends State<ChatInputBar> {
     }
   }
 
+  Widget _buildReplyPreview() {
+    if (widget.replyMessage == null) return const SizedBox.shrink();
+
+    final msg = widget.replyMessage!;
+    String snippet = msg.decryptedContent ?? '';
+
+    if (msg.messageType == MessageType.image) {
+      snippet = '📷 Photo';
+      final payload = EphemeralMediaPayload.tryParse(msg.decryptedContent ?? '');
+      if (payload != null && payload.caption != null && payload.caption!.isNotEmpty) {
+        snippet = '📷 ${payload.caption}';
+      }
+    } else if (msg.messageType == MessageType.video) {
+      snippet = '🎥 Video';
+      final payload = EphemeralMediaPayload.tryParse(msg.decryptedContent ?? '');
+      if (payload != null && payload.caption != null && payload.caption!.isNotEmpty) {
+        snippet = '🎥 ${payload.caption}';
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(left: 8, right: 8, bottom: 4),
+      decoration: BoxDecoration(
+        color: MineTheme.surfaceDark.withAlpha(245),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12, width: 0.8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(40),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          decoration: const BoxDecoration(
+            border: Border(
+              left: BorderSide(
+                color: MineTheme.accentGreen,
+                width: 4,
+              ),
+            ),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.replySenderName ?? 'Message',
+                      style: const TextStyle(
+                        color: MineTheme.accentGreen,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      snippet.isNotEmpty ? snippet : '...',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close_rounded, size: 18, color: Colors.white70),
+                tooltip: 'Cancel reply',
+                onPressed: widget.onCancelReply,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -133,6 +250,7 @@ class ChatInputBarState extends State<ChatInputBar> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          _buildReplyPreview(),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             color: Colors.transparent,

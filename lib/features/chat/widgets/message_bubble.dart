@@ -628,48 +628,7 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
             if (_mediaBytes != null && _mediaBytes!.isNotEmpty)
               isVideo
                   ? _buildVideoCard()
-                  : Image.memory(
-                      _mediaBytes!,
-                      fit: BoxFit.contain,
-                      gaplessPlayback: true,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          height: 130,
-                          width: 160,
-                          color: const Color(0xFF1B272E),
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 42,
-                                  height: 42,
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withAlpha(140),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white30, width: 1),
-                                  ),
-                                  child: const Icon(
-                                    Icons.refresh_rounded,
-                                    color: Colors.white,
-                                    size: 22,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                const Text(
-                                  'Tap to retry',
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    )
+                  : _buildImageCard()
             else
               Container(
                 height: 130,
@@ -771,6 +730,12 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
   Widget _buildVideoCard() {
     return _InlineVideoThumbnail(
       videoBytes: _mediaBytes!,
+    );
+  }
+
+  Widget _buildImageCard() {
+    return _InlineImageThumbnail(
+      imageBytes: _mediaBytes!,
     );
   }
 
@@ -972,46 +937,63 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
   Widget build(BuildContext context) {
     if (_isInitialized && _controller != null) {
       final durationStr = _formatDuration(_controller!.value.duration);
+      final rawAspect = _controller!.value.aspectRatio > 0 ? _controller!.value.aspectRatio : (16.0 / 9.0);
+      // Max vertical ratio is 9:16 (0.5625), max horizontal ratio is 16:9 (1.777)
+      final clampedAspect = rawAspect.clamp(9.0 / 16.0, 16.0 / 9.0);
 
-      return AspectRatio(
-        aspectRatio: _controller!.value.aspectRatio > 0 ? _controller!.value.aspectRatio : 16 / 9,
-        child: Stack(
-          alignment: Alignment.center,
-          fit: StackFit.expand,
-          children: [
-            VideoPlayer(_controller!),
+      final size = _controller!.value.size;
+      final videoWidth = size.width > 0 ? size.width : 160.0;
+      final videoHeight = size.height > 0 ? size.height : 90.0;
 
-            // Dark dim overlay for high contrast play icon
-            Container(color: Colors.black.withAlpha(55)),
-
-            // Top Video Duration badge
-            Positioned(
-              top: 6,
-              left: 6,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.black.withAlpha(150),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.videocam_rounded, color: Colors.white, size: 12),
-                    const SizedBox(width: 4),
-                    Text(
-                      durationStr.isNotEmpty ? durationStr : 'Video',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+      return ClipRRect(
+        child: AspectRatio(
+          aspectRatio: clampedAspect,
+          child: Stack(
+            alignment: Alignment.center,
+            fit: StackFit.expand,
+            children: [
+              FittedBox(
+                fit: BoxFit.cover,
+                clipBehavior: Clip.hardEdge,
+                child: SizedBox(
+                  width: videoWidth,
+                  height: videoHeight,
+                  child: VideoPlayer(_controller!),
                 ),
               ),
-            ),
-          ],
+
+              // Dark dim overlay for high contrast
+              Container(color: Colors.black.withAlpha(45)),
+
+              // Top Video Duration badge
+              Positioned(
+                top: 6,
+                left: 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withAlpha(150),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.videocam_rounded, color: Colors.white, size: 12),
+                      const SizedBox(width: 4),
+                      Text(
+                        durationStr.isNotEmpty ? durationStr : 'Video',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -1032,6 +1014,79 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
               style: TextStyle(color: Colors.white54, fontSize: 11),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineImageThumbnail extends StatefulWidget {
+  final Uint8List imageBytes;
+
+  const _InlineImageThumbnail({
+    required this.imageBytes,
+  });
+
+  @override
+  State<_InlineImageThumbnail> createState() => _InlineImageThumbnailState();
+}
+
+class _InlineImageThumbnailState extends State<_InlineImageThumbnail> {
+  double? _aspectRatio;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveAspect();
+  }
+
+  @override
+  void didUpdateWidget(covariant _InlineImageThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.imageBytes != widget.imageBytes) {
+      _resolveAspect();
+    }
+  }
+
+  void _resolveAspect() {
+    final image = Image.memory(widget.imageBytes);
+    image.image.resolve(const ImageConfiguration()).addListener(
+      ImageStreamListener(
+        (info, _) {
+          if (mounted) {
+            final w = info.image.width.toDouble();
+            final h = info.image.height.toDouble();
+            if (w > 0 && h > 0) {
+              final rawAspect = w / h;
+              // Max vertical ratio 9:16 (0.5625), max horizontal ratio 16:9 (1.777)
+              final clamped = rawAspect.clamp(9.0 / 16.0, 16.0 / 9.0);
+              setState(() {
+                _aspectRatio = clamped;
+              });
+            }
+          }
+        },
+        onError: (e, s) {},
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final aspect = _aspectRatio ?? (1.0);
+
+    return ClipRRect(
+      child: AspectRatio(
+        aspectRatio: aspect,
+        child: Image.memory(
+          widget.imageBytes,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (context, error, stackTrace) {
+            return const Center(
+              child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 36),
+            );
+          },
         ),
       ),
     );

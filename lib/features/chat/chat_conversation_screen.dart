@@ -186,6 +186,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     _scrollController.dispose();
     if (!_saveHistory) {
       _chatRepo?.clearTransientMessages(widget.conversation.id);
+      try {
+        final connManager = context.read<ConnectionManager>();
+        connManager.ephemeralMediaService.clearTransientCache();
+      } catch (_) {}
     }
     super.dispose();
   }
@@ -244,8 +248,30 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     _inputKey.currentState?.requestInputFocus();
   }
 
+  void _scrollToMessage(String messageId) {
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx != -1 && _scrollController.hasClients) {
+      final total = _messages.length + 1;
+      final targetFraction = (idx + 1) / total;
+      final targetOffset = targetFraction * _scrollController.position.maxScrollExtent;
+      _scrollController.animateTo(
+        targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
   Future<void> _handleSendMessage(String text) async {
     final connManager = context.read<ConnectionManager>();
+
+    final replyTo = _replyingTo;
+    final replySenderName = replyTo != null
+        ? (replyTo.senderId.trim().toUpperCase() ==
+                connManager.myIdentity.deviceId.trim().toUpperCase()
+            ? 'You'
+            : _currentContact.nickname)
+        : null;
 
     if (_replyingTo != null) {
       setState(() {
@@ -258,6 +284,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
       conversation: widget.conversation,
       text: text,
       saveHistory: _saveHistory,
+      replyTo: replyTo,
+      replySenderName: replySenderName,
     );
 
     setState(() {
@@ -374,6 +402,37 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     final connManager = context.read<ConnectionManager>();
     final tempMessageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${connManager.myIdentity.deviceId.hashCode.abs()}';
 
+    final replyTo = _replyingTo;
+    final replySenderName = replyTo != null
+        ? (replyTo.senderId.trim().toUpperCase() ==
+                connManager.myIdentity.deviceId.trim().toUpperCase()
+            ? 'You'
+            : _currentContact.nickname)
+        : null;
+
+    if (_replyingTo != null) {
+      setState(() {
+        _replyingTo = null;
+      });
+    }
+
+    String? rText;
+    String? rMediaType;
+    if (replyTo != null) {
+      final ep = EphemeralMediaPayload.tryParse(replyTo.decryptedContent ?? '');
+      if (ep != null) {
+        rMediaType = ep.mediaType;
+        rText = (ep.caption != null && ep.caption!.trim().isNotEmpty)
+            ? ep.caption!
+            : (ep.mediaType == 'video' ? 'Video' : 'Photo');
+      } else {
+        rMediaType = replyTo.messageType == MessageType.video
+            ? 'video'
+            : (replyTo.messageType == MessageType.image ? 'photo' : 'text');
+        rText = replyTo.decryptedContent ?? '';
+      }
+    }
+
     final pendingMsg = MessageModel(
       id: tempMessageId,
       conversationId: widget.conversation.id,
@@ -389,6 +448,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         'mediaType': isVideo ? 'video' : 'photo',
         'caption': previewResult.caption,
       }),
+      replyToMessageId: replyTo?.id,
+      replySenderName: replySenderName,
+      replyText: rText,
+      replyMediaType: rMediaType,
     );
 
     if (mounted) {
@@ -400,6 +463,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
 
     try {
       final finalBytes = previewResult.editedBytes ?? result.rawBytes;
+      connManager.ephemeralMediaService.cacheMedia(tempMessageId, finalBytes);
+
       final sentMsg = await connManager.sendEphemeralMedia(
         contact: _currentContact,
         conversation: widget.conversation,
@@ -407,7 +472,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         mediaType: isVideo ? 'video' : 'photo',
         caption: previewResult.caption.isNotEmpty ? previewResult.caption : null,
         saveHistory: _saveHistory,
+        replyTo: replyTo,
+        replySenderName: replySenderName,
       );
+
+      connManager.ephemeralMediaService.cacheMedia(sentMsg.id, finalBytes);
 
       if (mounted) {
         setState(() {
@@ -510,6 +579,37 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
       final connManager = context.read<ConnectionManager>();
       final tempMessageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${connManager.myIdentity.deviceId.hashCode.abs()}';
 
+      final replyTo = _replyingTo;
+      final replySenderName = replyTo != null
+          ? (replyTo.senderId.trim().toUpperCase() ==
+                  connManager.myIdentity.deviceId.trim().toUpperCase()
+              ? 'You'
+              : _currentContact.nickname)
+          : null;
+
+      if (_replyingTo != null) {
+        setState(() {
+          _replyingTo = null;
+        });
+      }
+
+      String? rText;
+      String? rMediaType;
+      if (replyTo != null) {
+        final ep = EphemeralMediaPayload.tryParse(replyTo.decryptedContent ?? '');
+        if (ep != null) {
+          rMediaType = ep.mediaType;
+          rText = (ep.caption != null && ep.caption!.trim().isNotEmpty)
+              ? ep.caption!
+              : (ep.mediaType == 'video' ? 'Video' : 'Photo');
+        } else {
+          rMediaType = replyTo.messageType == MessageType.video
+              ? 'video'
+              : (replyTo.messageType == MessageType.image ? 'photo' : 'text');
+          rText = replyTo.decryptedContent ?? '';
+        }
+      }
+
       final pendingMsg = MessageModel(
         id: tempMessageId,
         conversationId: widget.conversation.id,
@@ -525,7 +625,14 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
           'mediaType': actualIsVideo ? 'video' : 'photo',
           'caption': previewResult.caption,
         }),
+        replyToMessageId: replyTo?.id,
+        replySenderName: replySenderName,
+        replyText: rText,
+        replyMediaType: rMediaType,
       );
+
+      final finalBytes = previewResult.editedBytes ?? rawBytes;
+      connManager.ephemeralMediaService.cacheMedia(tempMessageId, finalBytes);
 
       if (mounted) {
         setState(() {
@@ -534,7 +641,6 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         _scrollToBottom(animate: true);
       }
 
-      final finalBytes = previewResult.editedBytes ?? rawBytes;
       final sentMsg = await connManager.sendEphemeralMedia(
         contact: _currentContact,
         conversation: widget.conversation,
@@ -542,7 +648,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         mediaType: actualIsVideo ? 'video' : 'photo',
         caption: previewResult.caption.isNotEmpty ? previewResult.caption : null,
         saveHistory: _saveHistory,
+        replyTo: replyTo,
+        replySenderName: replySenderName,
       );
+
+      connManager.ephemeralMediaService.cacheMedia(sentMsg.id, finalBytes);
 
       if (mounted) {
         setState(() {
@@ -560,119 +670,22 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     }
   }
 
-  Future<void> _handleOpenEphemeral(MessageModel msg) async {
-    if (msg.isExpired || msg.viewCount >= 2) return;
-
+  Future<void> _handleOpenMedia(MessageModel msg, Uint8List rawBytes) async {
     final connManager = context.read<ConnectionManager>();
-
-    // 1. Ensure decrypted content is present
-    String? content = msg.decryptedContent;
-    if (content == null || content.isEmpty) {
-      content = await connManager.decryptMessageContent(msg, _currentContact);
-    }
-
-    if (content == null || content.isEmpty || content == '[Unable to decrypt]') {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Unable to decrypt media.'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-      return;
-    }
-
-    final payload = EphemeralMediaPayload.tryParse(content);
-    if (payload == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invalid media payload.'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-      return;
-    }
-
-    // Show loading indicator while downloading & decrypting into memory
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => Center(
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: MineTheme.surfaceDark,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(color: MineTheme.primaryTeal),
-              const SizedBox(height: 16),
-              Text(
-                'Decrypting ${payload.mediaType} into memory...',
-                style: const TextStyle(color: MineTheme.textLight, fontSize: 13),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    Uint8List rawBytes;
-    try {
-      rawBytes = await connManager.ephemeralMediaService.downloadAndDecrypt(payload);
-    } catch (e) {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop(); // Close dialog
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load media: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-      return;
-    }
-
-    if (mounted) Navigator.of(context, rootNavigator: true).pop(); // Close loading dialog
-
-    if (!mounted) return;
-
+    final payload = EphemeralMediaPayload.tryParse(msg.decryptedContent ?? '');
     final isMe = msg.senderId.trim().toUpperCase() == connManager.myIdentity.deviceId.trim().toUpperCase();
 
-    // Open full screen viewer (no timer bar)
     await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => EphemeralMediaViewerScreen(
           rawBytes: rawBytes,
-          mediaType: payload.mediaType,
+          mediaType: payload?.mediaType ?? (msg.messageType == MessageType.video ? 'video' : 'photo'),
           senderName: isMe ? 'You' : _currentContact.nickname,
-          caption: payload.caption,
+          caption: payload?.caption,
         ),
       ),
     );
-
-    if (mounted) {
-      await connManager.markEphemeralMessageViewed(msg);
-      final newCount = msg.viewCount + 1;
-      final isNowExpired = newCount >= 2;
-
-      setState(() {
-        final idx = _messages.indexWhere((m) => m.id == msg.id);
-        if (idx != -1) {
-          _messages[idx] = _messages[idx].copyWith(
-            viewCount: newCount,
-            isExpired: isNowExpired,
-          );
-        }
-      });
-    }
   }
 
   Future<void> _deleteMessage(MessageModel msg) async {
@@ -689,6 +702,73 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     setState(() {
       _messages.clear();
     });
+  }
+
+  void _confirmClearChat() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MineTheme.surfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Clear chat?',
+          style: TextStyle(color: MineTheme.textLight, fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        content: const Text(
+          'Are you sure you want to clear all messages in this chat? This cannot be undone.',
+          style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: MineTheme.textMuted)),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _clearChat();
+            },
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('Clear Chat'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteContact() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: MineTheme.surfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Delete ${_currentContact.nickname}?',
+          style: const TextStyle(color: MineTheme.textLight, fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        content: const Text(
+          'This will delete the contact and all chat messages from your device.',
+          style: TextStyle(color: MineTheme.textMuted, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: MineTheme.textMuted)),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final contactRepo = context.read<ContactRepository>();
+              final navigator = Navigator.of(context);
+              await contactRepo.deleteContact(_currentContact.id);
+              if (mounted) navigator.pop();
+            },
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -774,12 +854,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
                   ),
                 );
               } else if (value == 'clear_chat') {
-                await _clearChat();
+                _confirmClearChat();
               } else if (value == 'delete_contact') {
-                final contactRepo = context.read<ContactRepository>();
-                final navigator = Navigator.of(context);
-                await contactRepo.deleteContact(_currentContact.id);
-                if (mounted) navigator.pop();
+                _confirmDeleteContact();
               }
             },
             itemBuilder: (ctx) => [
@@ -878,7 +955,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
                                   message: msg,
                                   isMe: isMe,
                                   onDelete: () => _deleteMessage(msg),
-                                  onOpenEphemeral: _handleOpenEphemeral,
+                                  onOpenMedia: _handleOpenMedia,
+                                  onReplyTap: _scrollToMessage,
                                 );
 
                                 final wrappedBubble = msg.messageType == MessageType.system

@@ -690,7 +690,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
 
   Future<void> _deleteMessage(MessageModel msg) async {
     final chatRepo = context.read<ChatRepository>();
+    final connManager = context.read<ConnectionManager>();
     await chatRepo.deleteMessage(msg.id);
+    await connManager.ephemeralMediaService.deleteMessageMedia(msg.id, decryptedContent: msg.decryptedContent);
     setState(() {
       _messages.removeWhere((m) => m.id == msg.id);
     });
@@ -698,6 +700,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
 
   Future<void> _clearChat() async {
     final chatRepo = context.read<ChatRepository>();
+    final connManager = context.read<ConnectionManager>();
+    await connManager.ephemeralMediaService.deleteMessagesMedia(_messages);
     await chatRepo.deleteConversation(widget.conversation.id);
     setState(() {
       _messages.clear();
@@ -758,10 +762,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
           FilledButton(
             onPressed: () async {
               Navigator.pop(ctx);
+              final connManager = context.read<ConnectionManager>();
               final contactRepo = context.read<ContactRepository>();
-              final navigator = Navigator.of(context);
+              await connManager.ephemeralMediaService.deleteMessagesMedia(_messages);
               await contactRepo.deleteContact(_currentContact.id);
-              if (mounted) navigator.pop();
+              if (mounted) {
+                Navigator.pop(context);
+              }
             },
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             child: const Text('Delete'),

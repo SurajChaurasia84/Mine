@@ -1,9 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
+import 'package:path_provider/path_provider.dart';
 
 class EphemeralMediaPayload {
   final String mediaType; // 'photo' | 'video'
@@ -88,16 +91,137 @@ class EphemeralMediaPayload {
 
 class EphemeralMediaService {
   final AesGcm _aesGcm = AesGcm.with256bits();
+  final Sha256 _sha256 = Sha256();
   final Map<String, Uint8List> _memoryCache = {};
+  Directory? _mediaDir;
 
-  /// Caches decrypted media bytes in memory
-  void cacheMedia(String key, Uint8List bytes) {
-    _memoryCache[key] = bytes;
+  /// Retrieves or initializes the private app-only media storage directory.
+  /// Uses a hidden folder and `.nomedia` file so media is strictly invisible to
+  /// Gallery, Photos, and MediaScanner.
+  Future<Directory?> _getMediaDirectory() async {
+    if (kIsWeb) return null;
+    if (_mediaDir != null && _mediaDir!.existsSync()) {
+      return _mediaDir;
+    }
+    try {
+      final baseDir = await getApplicationSupportDirectory();
+      final mediaDir = Directory('${baseDir.path}/.app_media');
+      if (!mediaDir.existsSync()) {
+        await mediaDir.create(recursive: true);
+      }
+      // Create .nomedia file to prevent Android MediaScanner from scanning
+      final noMediaFile = File('${mediaDir.path}/.nomedia');
+      if (!noMediaFile.existsSync()) {
+        await noMediaFile.writeAsString('');
+      }
+      _mediaDir = mediaDir;
+      return _mediaDir;
+    } catch (_) {
+      return null;
+    }
   }
 
-  /// Retrieves cached media bytes if present
+  /// Generates a deterministic SHA-256 filename for caching on disk
+  Future<String> _getDiskFileName(String key) async {
+    final hash = await _sha256.hash(utf8.encode(key));
+    return hash.bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  }
+
+  /// Saves decrypted media to local private disk cache
+  Future<void> _saveMediaToDisk(String key, Uint8List bytes) async {
+    if (kIsWeb || key.isEmpty || bytes.isEmpty) return;
+    try {
+      final dir = await _getMediaDirectory();
+      if (dir == null) return;
+      final fileName = await _getDiskFileName(key);
+      final file = File('${dir.path}/$fileName.bin');
+      if (!file.existsSync() || file.lengthSync() == 0) {
+        await file.writeAsBytes(bytes, flush: true);
+      }
+    } catch (_) {}
+  }
+
+  /// Reads media from local private disk cache if it exists
+  Future<Uint8List?> _readMediaFromDisk(String key) async {
+    if (kIsWeb || key.isEmpty) return null;
+    try {
+      final dir = await _getMediaDirectory();
+      if (dir == null) return null;
+      final fileName = await _getDiskFileName(key);
+      final file = File('${dir.path}/$fileName.bin');
+      if (file.existsSync() && file.lengthSync() > 0) {
+        return await file.readAsBytes();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Caches decrypted media bytes in memory and background-saves to app private disk
+  void cacheMedia(String key, Uint8List bytes) {
+    if (key.isEmpty || bytes.isEmpty) return;
+    _memoryCache[key] = bytes;
+    _saveMediaToDisk(key, bytes);
+  }
+
+  /// Synchronously retrieves in-memory media bytes if present
   Uint8List? getCachedMedia(String key) {
     return _memoryCache[key];
+  }
+
+  /// Asynchronously checks RAM first, then local private disk storage
+  Future<Uint8List?> getCachedMediaAsync(String key) async {
+    if (_memoryCache.containsKey(key)) {
+      return _memoryCache[key];
+    }
+    final diskBytes = await _readMediaFromDisk(key);
+    if (diskBytes != null && diskBytes.isNotEmpty) {
+      _memoryCache[key] = diskBytes;
+      return diskBytes;
+    }
+    return null;
+  }
+
+  /// Deletes cached media from memory and disk for a specific key
+  Future<void> deleteMedia(String key) async {
+    if (key.isEmpty) return;
+    _memoryCache.remove(key);
+    if (kIsWeb) return;
+    try {
+      final dir = await _getMediaDirectory();
+      if (dir == null) return;
+      final fileName = await _getDiskFileName(key);
+      final file = File('${dir.path}/$fileName.bin');
+      if (file.existsSync()) {
+        await file.delete();
+      }
+    } catch (_) {}
+  }
+
+  /// Deletes all media associated with a message (checks message ID, mediaKey, URL)
+  Future<void> deleteMessageMedia(String messageId, {String? decryptedContent}) async {
+    await deleteMedia(messageId);
+    if (decryptedContent != null && decryptedContent.isNotEmpty) {
+      final payload = EphemeralMediaPayload.tryParse(decryptedContent);
+      if (payload != null) {
+        if (payload.mediaKeyBase64.isNotEmpty) {
+          await deleteMedia(payload.mediaKeyBase64);
+        }
+        if (payload.url.isNotEmpty) {
+          await deleteMedia(payload.url);
+        }
+      }
+    }
+  }
+
+  /// Deletes multiple media files (for clear chat or delete conversation)
+  Future<void> deleteMessagesMedia(List<dynamic> messages) async {
+    for (final m in messages) {
+      try {
+        final id = m.id as String;
+        final content = m.decryptedContent as String?;
+        await deleteMessageMedia(id, decryptedContent: content);
+      } catch (_) {}
+    }
   }
 
   /// Destroys in-memory media buffers for temporary/transient chats
@@ -194,10 +318,15 @@ class EphemeralMediaService {
       }
     }
 
-    // Cache the original processed bytes under the media key and message ID
+    // Cache the original processed bytes under the media key, message ID, and URL
     _memoryCache[keyBase64] = processedBytes;
+    await _saveMediaToDisk(keyBase64, processedBytes);
     if (messageId != null) {
       _memoryCache[messageId] = processedBytes;
+      await _saveMediaToDisk(messageId, processedBytes);
+    }
+    if (blobUrl.isNotEmpty) {
+      await _saveMediaToDisk(blobUrl, processedBytes);
     }
 
     return EphemeralMediaPayload(
@@ -261,22 +390,64 @@ class EphemeralMediaService {
     return '';
   }
 
-  /// Gets media from in-memory cache or downloads and decrypts into RAM
+  /// Gets media from in-memory cache or local disk storage, or downloads and decrypts
   Future<Uint8List> getOrDownloadMedia(EphemeralMediaPayload payload, {String? messageId}) async {
+    // 1. Check RAM cache by key
     if (payload.mediaKeyBase64.isNotEmpty && _memoryCache.containsKey(payload.mediaKeyBase64)) {
       return _memoryCache[payload.mediaKeyBase64]!;
     }
+    // 2. Check RAM cache by message ID
     if (messageId != null && _memoryCache.containsKey(messageId)) {
       return _memoryCache[messageId]!;
     }
 
+    // 3. Check Local Disk Storage by mediaKeyBase64
+    if (payload.mediaKeyBase64.isNotEmpty) {
+      final diskBytes = await _readMediaFromDisk(payload.mediaKeyBase64);
+      if (diskBytes != null && diskBytes.isNotEmpty) {
+        _memoryCache[payload.mediaKeyBase64] = diskBytes;
+        if (messageId != null) _memoryCache[messageId] = diskBytes;
+        return diskBytes;
+      }
+    }
+
+    // 4. Check Local Disk Storage by messageId
+    if (messageId != null && messageId.isNotEmpty) {
+      final diskBytes = await _readMediaFromDisk(messageId);
+      if (diskBytes != null && diskBytes.isNotEmpty) {
+        _memoryCache[messageId] = diskBytes;
+        if (payload.mediaKeyBase64.isNotEmpty) _memoryCache[payload.mediaKeyBase64] = diskBytes;
+        return diskBytes;
+      }
+    }
+
+    // 5. Check Local Disk Storage by URL
+    if (payload.url.isNotEmpty) {
+      final diskBytes = await _readMediaFromDisk(payload.url);
+      if (diskBytes != null && diskBytes.isNotEmpty) {
+        _memoryCache[payload.url] = diskBytes;
+        if (payload.mediaKeyBase64.isNotEmpty) _memoryCache[payload.mediaKeyBase64] = diskBytes;
+        if (messageId != null) _memoryCache[messageId] = diskBytes;
+        return diskBytes;
+      }
+    }
+
+    // 6. Not in local storage -> Download over network and decrypt
     final bytes = await downloadAndDecrypt(payload);
+
+    // 7. Store in RAM and persist to private app disk storage so it never downloads again
     if (payload.mediaKeyBase64.isNotEmpty) {
       _memoryCache[payload.mediaKeyBase64] = bytes;
+      await _saveMediaToDisk(payload.mediaKeyBase64, bytes);
     }
     if (messageId != null) {
       _memoryCache[messageId] = bytes;
+      await _saveMediaToDisk(messageId, bytes);
     }
+    if (payload.url.isNotEmpty) {
+      await _saveMediaToDisk(payload.url, bytes);
+    }
+
     return bytes;
   }
 

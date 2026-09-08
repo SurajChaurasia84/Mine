@@ -1,23 +1,27 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pro_image_editor/pro_image_editor.dart';
 import 'package:video_player/video_player.dart';
 import '../../../app/theme.dart';
 
 class MediaSendResult {
   final bool shouldSend;
   final String caption;
+  final Uint8List? editedBytes;
 
   MediaSendResult({
     required this.shouldSend,
     required this.caption,
+    this.editedBytes,
   });
 }
 
-/// WhatsApp-style full screen Media Preview screen before sending.
-/// Displays photo or video with caption input and toggleable overlay UI on tap.
+/// WhatsApp-style full screen Media Preview & Editor screen before sending.
+/// Powered by `pro_image_editor` for photo editing (crop, rotate, draw, text, filters, stickers, etc.)
 class MediaSendPreviewScreen extends StatefulWidget {
   final Uint8List rawBytes;
   final String mediaType; // 'photo' | 'video'
@@ -42,9 +46,14 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
   File? _tempVideoFile;
   bool _isVideoInitialized = false;
 
+  // Image editing state
+  late Uint8List _currentBytes;
+  bool _hasEdits = false;
+
   @override
   void initState() {
     super.initState();
+    _currentBytes = widget.rawBytes;
     if (widget.mediaType == 'video') {
       _initVideo();
     }
@@ -113,11 +122,55 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
     });
   }
 
+  Future<void> _openProImageEditor() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ProImageEditor.memory(
+          _currentBytes,
+          configs: ProImageEditorConfigs(
+            theme: ThemeData.dark().copyWith(
+              scaffoldBackgroundColor: Colors.black,
+              appBarTheme: const AppBarTheme(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+              ),
+              colorScheme: const ColorScheme.dark(
+                primary: MineTheme.accentGreen,
+                secondary: MineTheme.accentGreen,
+              ),
+            ),
+          ),
+          callbacks: ProImageEditorCallbacks(
+            onImageEditingComplete: (Uint8List bytes) async {
+              setState(() {
+                _currentBytes = bytes;
+                _hasEdits = true;
+              });
+              Navigator.pop(context);
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _resetToOriginal() {
+    setState(() {
+      _currentBytes = widget.rawBytes;
+      _hasEdits = false;
+    });
+  }
+
   void _handleSend() {
     final caption = _captionController.text.trim();
     Navigator.pop(
       context,
-      MediaSendResult(shouldSend: true, caption: caption),
+      MediaSendResult(
+        shouldSend: true,
+        caption: caption,
+        editedBytes: _hasEdits ? _currentBytes : null,
+      ),
     );
   }
 
@@ -212,7 +265,7 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // 1. Media Preview Area (Static background)
+            // 1. Center Image / Video Area
             Center(
               child: isVideo
                   ? (_isVideoInitialized && _videoController != null
@@ -222,7 +275,6 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
                             alignment: Alignment.center,
                             children: [
                               VideoPlayer(_videoController!),
-                              // Center Play / Pause button
                               AnimatedOpacity(
                                 duration: const Duration(milliseconds: 200),
                                 opacity: _isOverlayVisible ? 1.0 : 0.0,
@@ -263,28 +315,25 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
                           ),
                         )
                       : const CircularProgressIndicator(color: MineTheme.accentGreen))
-                  : InteractiveViewer(
-                      minScale: 0.8,
-                      maxScale: 4.0,
-                      child: Image.memory(
-                        widget.rawBytes,
-                        fit: BoxFit.contain,
-                      ),
+                  : Image.memory(
+                      _currentBytes,
+                      fit: BoxFit.contain,
+                      gaplessPlayback: true,
                     ),
             ),
 
-            // 2. Top Bar (Close button & Recipient Header)
+            // 2. Top Bar (Close button, Recipient Header, Edit and Reset Tools)
             AnimatedPositioned(
               duration: const Duration(milliseconds: 200),
-              top: _isOverlayVisible ? 0 : -80,
+              top: _isOverlayVisible ? 0 : -100,
               left: 0,
               right: 0,
               child: Container(
                 padding: EdgeInsets.only(
-                  top: MediaQuery.of(context).padding.top + 8,
-                  left: 8,
-                  right: 16,
-                  bottom: 12,
+                  top: MediaQuery.of(context).padding.top + 6,
+                  left: 6,
+                  right: 12,
+                  bottom: 10,
                 ),
                 decoration: const BoxDecoration(
                   gradient: LinearGradient(
@@ -299,44 +348,57 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
                       icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
                       onPressed: () => Navigator.pop(context),
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 2),
                     Text(
                       widget.recipientName.isNotEmpty ? widget.recipientName : 'Preview',
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 18,
+                        fontSize: 17,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withAlpha(30),
-                        borderRadius: BorderRadius.circular(12),
+
+                    // Action Icons for Photo Editing
+                    if (!isVideo) ...[
+                      // Open Full Pro Image Editor (Crop, Rotate, Filter, Draw, Text, etc.)
+                      IconButton(
+                        tooltip: 'Edit photo',
+                        icon: const Icon(Icons.edit_rounded, color: Colors.white, size: 24),
+                        onPressed: _openProImageEditor,
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            widget.mediaType == 'video' ? Icons.videocam_rounded : Icons.photo_camera_rounded,
-                            color: Colors.white,
-                            size: 15,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            widget.mediaType == 'video' ? 'Video' : 'Photo',
-                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
-                          ),
-                        ],
+
+                      // Reset button (Visible when modified)
+                      if (_hasEdits)
+                        IconButton(
+                          tooltip: 'Reset to original',
+                          icon: const Icon(Icons.restart_alt_rounded, color: Colors.orangeAccent, size: 24),
+                          onPressed: _resetToOriginal,
+                        ),
+                    ],
+
+                    if (isVideo)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withAlpha(30),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.videocam_rounded, color: Colors.white, size: 15),
+                            SizedBox(width: 6),
+                            Text('Video', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+                          ],
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
             ),
 
-            // 3. Bottom Overlay Bar (WhatsApp-style Caption input + Send Button)
+            // 3. Bottom Overlay Bar (Caption Input + Send Button)
             Positioned(
               bottom: 0,
               left: 0,
@@ -424,20 +486,20 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
                                       size: 22,
                                     ),
                                   ),
+                                  ),
                                 ),
                               ),
-                            ),
                           ],
                         ),
                       ],
                     ),
+                  ),
+                ),
               ),
             ),
-          ),
+          ],
         ),
-      ],
-    ),
-  ),
-);
-}
+      ),
+    );
+  }
 }

@@ -30,6 +30,10 @@ class MessageModel {
   // Transient memory-only fields (decrypted in memory, never written to disk in plaintext)
   String? decryptedContent;
   String? localAttachmentPath;
+  String? replyToMessageId;
+  String? replySenderName;
+  String? replyText;
+  String? replyMediaType;
 
   MessageModel({
     required this.id,
@@ -43,6 +47,10 @@ class MessageModel {
     this.isExpired = false,
     this.decryptedContent,
     this.localAttachmentPath,
+    this.replyToMessageId,
+    this.replySenderName,
+    this.replyText,
+    this.replyMediaType,
   });
 
   MessageModel copyWith({
@@ -57,6 +65,10 @@ class MessageModel {
     bool? isExpired,
     String? decryptedContent,
     String? localAttachmentPath,
+    String? replyToMessageId,
+    String? replySenderName,
+    String? replyText,
+    String? replyMediaType,
   }) {
     return MessageModel(
       id: id ?? this.id,
@@ -70,6 +82,10 @@ class MessageModel {
       isExpired: isExpired ?? this.isExpired,
       decryptedContent: decryptedContent ?? this.decryptedContent,
       localAttachmentPath: localAttachmentPath ?? this.localAttachmentPath,
+      replyToMessageId: replyToMessageId ?? this.replyToMessageId,
+      replySenderName: replySenderName ?? this.replySenderName,
+      replyText: replyText ?? this.replyText,
+      replyMediaType: replyMediaType ?? this.replyMediaType,
     );
   }
 

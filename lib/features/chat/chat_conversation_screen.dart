@@ -22,6 +22,7 @@ import 'widgets/ephemeral_media_viewer_screen.dart';
 import 'widgets/media_send_preview_screen.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/save_history_icon_button.dart';
+import 'widgets/swipe_to_reply.dart';
 import 'widgets/whatsapp_camera_screen.dart';
 
 class ChatConversationScreen extends StatefulWidget {
@@ -46,6 +47,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
   late final ScrollController _scrollController = ScrollController(initialScrollOffset: 999999.0);
   final GlobalKey<ChatInputBarState> _inputKey = GlobalKey<ChatInputBarState>();
   bool _saveHistory = false;
+  MessageModel? _replyingTo;
   StreamSubscription? _messageSub;
   StreamSubscription? _receiptSub;
   StreamSubscription? _readReceiptSub;
@@ -235,8 +237,21 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     });
   }
 
+  void _handleReply(MessageModel msg) {
+    setState(() {
+      _replyingTo = msg;
+    });
+    _inputKey.currentState?.requestInputFocus();
+  }
+
   Future<void> _handleSendMessage(String text) async {
     final connManager = context.read<ConnectionManager>();
+
+    if (_replyingTo != null) {
+      setState(() {
+        _replyingTo = null;
+      });
+    }
 
     final sentMsg = await connManager.sendMessage(
       contact: _currentContact,
@@ -866,17 +881,24 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
                                   onOpenEphemeral: _handleOpenEphemeral,
                                 );
 
+                                final wrappedBubble = msg.messageType == MessageType.system
+                                    ? bubble
+                                    : SwipeToReply(
+                                        onReply: () => _handleReply(msg),
+                                        child: bubble,
+                                      );
+
                                 if (showDateBadge) {
                                   return Column(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       _buildDateBadge(msg.timestamp),
-                                      bubble,
+                                      wrappedBubble,
                                     ],
                                   );
                                 }
 
-                                return bubble;
+                                return wrappedBubble;
                               },
                             ),
                 ),
@@ -889,6 +911,14 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
                 onAttach: _handleAttachMedia,
                 onCamera: _handleCameraTap,
                 onTap: () => _scrollToBottom(animate: true),
+                replyMessage: _replyingTo,
+                replySenderName: _replyingTo != null
+                    ? (_replyingTo!.senderId.trim().toUpperCase() ==
+                            connManager.myIdentity.deviceId.trim().toUpperCase()
+                        ? 'You'
+                        : _currentContact.nickname)
+                    : null,
+                onCancelReply: () => setState(() => _replyingTo = null),
               ),
             ],
           ),

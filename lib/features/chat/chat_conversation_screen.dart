@@ -200,9 +200,18 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
 
     final msgs = await chatRepo.getMessages(widget.conversation.id);
 
-    // Decrypt all messages for display
+    // Decrypt all messages for display & pre-warm media bytes in RAM cache
     for (final m in msgs) {
       await connManager.decryptMessageContent(m, _currentContact);
+      if (m.messageType == MessageType.image || m.messageType == MessageType.video) {
+        final payload = EphemeralMediaPayload.tryParse(m.decryptedContent ?? '');
+        if (payload != null) {
+          final cacheKey = payload.mediaKeyBase64.isNotEmpty ? payload.mediaKeyBase64 : m.id;
+          if (connManager.ephemeralMediaService.getCachedMedia(cacheKey) == null) {
+            connManager.ephemeralMediaService.getCachedMediaAsync(cacheKey);
+          }
+        }
+      }
     }
 
     if (mounted) {

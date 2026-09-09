@@ -42,6 +42,7 @@ class ConnectionManager extends ChangeNotifier {
   final bool enablePeriodicFlush;
   Timer? _outboxPollTimer;
   final Map<String, Set<String>> _pendingReadReceipts = {};
+  final Set<String> _processedMessageIds = {};
 
   final _messageStreamController = StreamController<MessageModel>.broadcast();
   final _receiptStreamController = StreamController<String>.broadcast();
@@ -522,7 +523,7 @@ class ConnectionManager extends ChangeNotifier {
           saveHistory: saveHistory,
           timestamp: now,
         );
-        signalingClient.sendEnvelope(envelope);
+        signalingClient.sendEnvelope(envelope, retainInMailbox: true);
 
         // Successfully dispatched from sender device to signaling network -> Sent (Single tick)
         await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
@@ -629,7 +630,7 @@ class ConnectionManager extends ChangeNotifier {
           saveHistory: saveHistory,
           timestamp: now,
         );
-        signalingClient.sendEnvelope(envelope);
+        signalingClient.sendEnvelope(envelope, retainInMailbox: true);
 
         await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
         final sentMessage = message.copyWith(status: MessageStatus.sent);
@@ -681,7 +682,7 @@ class ConnectionManager extends ChangeNotifier {
                 senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
                 timestamp: msg.timestamp,
               );
-              signalingClient.sendEnvelope(envelope);
+              signalingClient.sendEnvelope(envelope, retainInMailbox: true);
               await chatRepository.updateMessageStatus(msg.id, MessageStatus.sent);
             } catch (_) {}
           }
@@ -709,7 +710,7 @@ class ConnectionManager extends ChangeNotifier {
             senderIdentityPublicKey: myIdentity.identityPublicKeyHex,
             timestamp: msg.timestamp,
           );
-          signalingClient.sendEnvelope(envelope);
+          signalingClient.sendEnvelope(envelope, retainInMailbox: true);
           await chatRepository.updateMessageStatus(msg.id, MessageStatus.sent);
         } catch (_) {}
       }
@@ -759,20 +760,13 @@ class ConnectionManager extends ChangeNotifier {
           return;
         }
 
-        // Passcode valid -> Register verified peer contact and send public keys
+        // Passcode valid -> Record peer keys so they are available when a real message arrives
         if (envelope.senderIdentityPublicKey != null && envelope.senderDhPublicKey != null) {
-          final existingContact = await contactRepository.findByPeerDeviceId(senderDeviceId);
-          if (existingContact == null) {
-            final prefix = senderDeviceId.length >= 4 ? senderDeviceId.substring(0, 4) : senderDeviceId;
-            final newContact = await contactRepository.addContact(
-              peerDeviceId: senderDeviceId,
-              peerIdentityPublicKey: envelope.senderIdentityPublicKey!,
-              peerDhPublicKey: envelope.senderDhPublicKey!,
-              nickname: 'User $prefix',
-            );
-            await chatRepository.getOrCreateConversation(newContact.id);
-            notifyListeners();
-          }
+          signalingClient.recordPeerKeys(
+            peerDeviceId: senderDeviceId,
+            ik: envelope.senderIdentityPublicKey!,
+            dh: envelope.senderDhPublicKey!,
+          );
         }
 
         final replyEnvelope = SignalingEnvelope(
@@ -807,6 +801,7 @@ class ConnectionManager extends ChangeNotifier {
       if (msgId != null) {
         await chatRepository.updateMessageStatus(msgId, MessageStatus.delivered);
         _receiptStreamController.add(msgId);
+        signalingClient.clearMessageMailbox(senderDeviceId, msgId);
         notifyListeners();
       }
       return;
@@ -830,6 +825,44 @@ class ConnectionManager extends ChangeNotifier {
     }
 
     if (envelope.type == 'message') {
+      final msgId = envelope.messageId ?? 'recv_${DateTime.now().millisecondsSinceEpoch}';
+
+      // Deduplication check: if message was already processed in memory or DB, send ACK and avoid duplicate bubble
+      if (_processedMessageIds.contains(msgId)) {
+        if (envelope.messageId != null) {
+          final receipt = SignalingEnvelope(
+            to: senderDeviceId,
+            from: myIdentity.deviceId,
+            type: 'delivery_receipt',
+            payload: '',
+            messageId: envelope.messageId,
+          );
+          signalingClient.sendEnvelope(receipt, retainInMailbox: true);
+        }
+        return;
+      }
+
+      final existingInDb = await chatRepository.getMessageById(msgId);
+      if (existingInDb != null) {
+        _processedMessageIds.add(msgId);
+        if (envelope.messageId != null) {
+          final receipt = SignalingEnvelope(
+            to: senderDeviceId,
+            from: myIdentity.deviceId,
+            type: 'delivery_receipt',
+            payload: '',
+            messageId: envelope.messageId,
+          );
+          signalingClient.sendEnvelope(receipt, retainInMailbox: true);
+        }
+        return;
+      }
+
+      _processedMessageIds.add(msgId);
+      if (_processedMessageIds.length > 3000) {
+        _processedMessageIds.remove(_processedMessageIds.first);
+      }
+
       // Find or verify contact
       var contact = await contactRepository.findByPeerDeviceId(senderDeviceId);
       if (contact == null) {
@@ -932,7 +965,7 @@ class ConnectionManager extends ChangeNotifier {
         chatRepository.addTransientMessage(incomingMessage);
       }
 
-      // Send back a delivery receipt
+      // Send back a delivery receipt with retain in mailbox
       if (envelope.messageId != null) {
         final receipt = SignalingEnvelope(
           to: senderDeviceId,
@@ -941,7 +974,7 @@ class ConnectionManager extends ChangeNotifier {
           payload: '',
           messageId: envelope.messageId,
         );
-        signalingClient.sendEnvelope(receipt);
+        signalingClient.sendEnvelope(receipt, retainInMailbox: true);
       }
 
       _messageStreamController.add(incomingMessage);
@@ -1049,7 +1082,7 @@ class ConnectionManager extends ChangeNotifier {
           payload: messageIds.join(','),
           messageId: messageIds.last,
         );
-        signalingClient.sendEnvelope(receipt);
+        signalingClient.sendEnvelope(receipt, retainInMailbox: true);
         debugPrint('[ConnectionManager] Sent read receipt for ${messageIds.length} msgs to $targetPeer');
       } catch (e) {
         debugPrint('[ConnectionManager] Error sending read receipt: $e');

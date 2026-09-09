@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import '../../../app/theme.dart';
+import '../../../services/media/video_thumbnail_manager.dart';
 
 class EphemeralMediaViewerScreen extends StatefulWidget {
   final Uint8List rawBytes;
@@ -100,11 +101,17 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
         final uri = Uri.dataFromBytes(widget.rawBytes, mimeType: 'video/mp4');
         _videoController = VideoPlayerController.networkUrl(uri);
       } else {
-        final tempDir = await getTemporaryDirectory();
-        final tempPath = '${tempDir.path}/ephemeral_${DateTime.now().millisecondsSinceEpoch}.mp4';
-        _tempVideoFile = File(tempPath);
-        await _tempVideoFile!.writeAsBytes(widget.rawBytes, flush: true);
-        _videoController = VideoPlayerController.file(_tempVideoFile!);
+        final cachedFile = await VideoThumbnailManager.getOrCreateVideoFile(widget.rawBytes);
+        if (cachedFile != null && cachedFile.existsSync()) {
+          _tempVideoFile = cachedFile;
+          _videoController = VideoPlayerController.file(cachedFile);
+        } else {
+          final tempDir = await getTemporaryDirectory();
+          final tempPath = '${tempDir.path}/ephemeral_${DateTime.now().millisecondsSinceEpoch}.mp4';
+          _tempVideoFile = File(tempPath);
+          await _tempVideoFile!.writeAsBytes(widget.rawBytes, flush: true);
+          _videoController = VideoPlayerController.file(_tempVideoFile!);
+        }
       }
 
       await _videoController!.initialize();
@@ -131,9 +138,11 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
     _videoController?.removeListener(_onVideoUpdate);
     _videoController?.dispose();
     if (!kIsWeb && _tempVideoFile != null && _tempVideoFile!.existsSync()) {
-      try {
-        _tempVideoFile!.deleteSync();
-      } catch (_) {}
+      if (_tempVideoFile!.path.contains('ephemeral_') || _tempVideoFile!.path.contains('temp_')) {
+        try {
+          _tempVideoFile!.deleteSync();
+        } catch (_) {}
+      }
     }
     super.dispose();
   }

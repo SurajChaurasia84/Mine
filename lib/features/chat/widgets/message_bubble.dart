@@ -1,9 +1,6 @@
-import 'dart:io';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
@@ -12,6 +9,7 @@ import '../../../core/utils/date_formatter.dart';
 import '../../../data/models/message_model.dart';
 import '../../../services/connection_manager/connection_manager.dart';
 import '../../../services/media/ephemeral_media_service.dart';
+import '../../../services/media/video_thumbnail_manager.dart';
 
 class MessageBubble extends StatelessWidget {
   final MessageModel message;
@@ -537,11 +535,36 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
   Uint8List? _mediaBytes;
   bool _isLoading = false;
   String? _error;
+  bool _initialized = false;
 
   @override
-  void initState() {
-    super.initState();
-    _loadMedia();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_initialized) {
+      _initialized = true;
+      _trySynchronousRamCache();
+      if (_mediaBytes == null) {
+        _loadMedia();
+      }
+    }
+  }
+
+  void _trySynchronousRamCache() {
+    try {
+      final connManager = context.read<ConnectionManager>();
+      final mediaService = connManager.ephemeralMediaService;
+      final cacheKey = widget.payload?.mediaKeyBase64.isNotEmpty == true
+          ? widget.payload!.mediaKeyBase64
+          : widget.message.id;
+
+      final cached = mediaService.getCachedMedia(cacheKey) ??
+          mediaService.getCachedMedia(widget.message.id) ??
+          (widget.payload?.url.isNotEmpty == true ? mediaService.getCachedMedia(widget.payload!.url) : null);
+
+      if (cached != null && cached.isNotEmpty) {
+        _mediaBytes = cached;
+      }
+    } catch (_) {}
   }
 
   @override
@@ -549,7 +572,10 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.message.id != widget.message.id ||
         oldWidget.payload?.mediaKeyBase64 != widget.payload?.mediaKeyBase64) {
-      _loadMedia();
+      _trySynchronousRamCache();
+      if (_mediaBytes == null) {
+        _loadMedia();
+      }
     }
   }
 
@@ -562,9 +588,11 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
         : widget.message.id;
 
     // 1. Instant RAM check
-    final cached = mediaService.getCachedMedia(cacheKey);
-    if (cached != null) {
-      if (mounted) {
+    final cached = mediaService.getCachedMedia(cacheKey) ??
+        mediaService.getCachedMedia(widget.message.id) ??
+        (widget.payload?.url.isNotEmpty == true ? mediaService.getCachedMedia(widget.payload!.url) : null);
+    if (cached != null && cached.isNotEmpty) {
+      if (mounted && _mediaBytes != cached) {
         setState(() {
           _mediaBytes = cached;
           _isLoading = false;
@@ -756,6 +784,7 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
   Widget _buildVideoCard() {
     return _InlineVideoThumbnail(
       videoBytes: _mediaBytes!,
+      messageId: widget.message.id,
     );
   }
 
@@ -879,9 +908,11 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
 
 class _InlineVideoThumbnail extends StatefulWidget {
   final Uint8List videoBytes;
+  final String? messageId;
 
   const _InlineVideoThumbnail({
     required this.videoBytes,
+    this.messageId,
   });
 
   @override
@@ -889,91 +920,69 @@ class _InlineVideoThumbnail extends StatefulWidget {
 }
 
 class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
-  VideoPlayerController? _controller;
-  File? _tempFile;
-  bool _isInitialized = false;
+  VideoThumbnailInfo? _info;
 
   @override
   void initState() {
     super.initState();
-    _initThumbnail();
+    _loadThumbnail();
   }
 
   @override
   void didUpdateWidget(covariant _InlineVideoThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoBytes != widget.videoBytes) {
-      _disposeController();
-      _initThumbnail();
+      _loadThumbnail();
     }
   }
 
-  Future<void> _initThumbnail() async {
-    try {
-      if (kIsWeb) {
-        final uri = Uri.dataFromBytes(widget.videoBytes, mimeType: 'video/mp4');
-        _controller = VideoPlayerController.networkUrl(uri);
-      } else {
-        final tempDir = await getTemporaryDirectory();
-        final tempPath = '${tempDir.path}/vthumb_${DateTime.now().millisecondsSinceEpoch}_${widget.videoBytes.hashCode.abs()}.mp4';
-        _tempFile = File(tempPath);
-        await _tempFile!.writeAsBytes(widget.videoBytes, flush: true);
-        _controller = VideoPlayerController.file(_tempFile!);
+  void _loadThumbnail() {
+    // 1. Instant RAM Cache hit (0ms - zero delay)
+    final cached = VideoThumbnailManager.getCachedInfo(widget.videoBytes);
+    if (cached != null) {
+      _info = cached;
+      if (cached.isReady && cached.controller != null && cached.controller!.value.isInitialized) {
+        return;
       }
+    }
 
-      await _controller!.initialize();
-      await _controller!.pause();
+    // 2. Fast background load & pool registration
+    VideoThumbnailManager.loadThumbnail(
+      widget.videoBytes,
+      messageId: widget.messageId,
+      onUpdate: () {
+        if (mounted) {
+          final updated = VideoThumbnailManager.getCachedInfo(widget.videoBytes);
+          setState(() {
+            _info = updated;
+          });
+        }
+      },
+    ).then((info) {
       if (mounted) {
         setState(() {
-          _isInitialized = true;
+          _info = info;
         });
       }
-    } catch (_) {}
-  }
-
-  void _disposeController() {
-    _controller?.dispose();
-    _controller = null;
-    if (!kIsWeb && _tempFile != null && _tempFile!.existsSync()) {
-      try {
-        _tempFile!.deleteSync();
-      } catch (_) {}
-      _tempFile = null;
-    }
-  }
-
-  @override
-  void dispose() {
-    _disposeController();
-    super.dispose();
-  }
-
-  String _formatDuration(Duration d) {
-    if (d <= Duration.zero) return '';
-    final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    if (d.inHours > 0) {
-      final hours = d.inHours.toString().padLeft(2, '0');
-      return '$hours:$minutes:$seconds';
-    }
-    return '$minutes:$seconds';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isInitialized && _controller != null) {
-      final durationStr = _formatDuration(_controller!.value.duration);
-      final rawAspect = _controller!.value.aspectRatio > 0 ? _controller!.value.aspectRatio : (16.0 / 9.0);
-      // Max vertical ratio is 9:16 (0.5625), max horizontal ratio is 16:9 (1.777)
-      final clampedAspect = rawAspect.clamp(9.0 / 16.0, 16.0 / 9.0);
+    final info = _info ?? VideoThumbnailManager.getCachedInfo(widget.videoBytes);
+    final isReady = info != null && info.controller != null && info.controller!.value.isInitialized;
+    final aspect = info?.aspectRatio ?? (16.0 / 9.0);
+    final durationStr = info?.durationString ?? '';
 
-      final size = _controller!.value.size;
+    if (isReady) {
+      final controller = info.controller!;
+      final size = controller.value.size;
       final videoWidth = size.width > 0 ? size.width : 160.0;
       final videoHeight = size.height > 0 ? size.height : 90.0;
 
       return ClipRRect(
         child: AspectRatio(
-          aspectRatio: clampedAspect,
+          aspectRatio: aspect,
           child: Stack(
             alignment: Alignment.center,
             fit: StackFit.expand,
@@ -984,7 +993,7 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
                 child: SizedBox(
                   width: videoWidth,
                   height: videoHeight,
-                  child: VideoPlayer(_controller!),
+                  child: VideoPlayer(controller),
                 ),
               ),
 
@@ -992,54 +1001,91 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
               Container(color: Colors.black.withAlpha(45)),
 
               // Top Video Duration badge
-              Positioned(
-                top: 6,
-                left: 6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withAlpha(150),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.videocam_rounded, color: Colors.white, size: 12),
-                      const SizedBox(width: 4),
-                      Text(
-                        durationStr.isNotEmpty ? durationStr : 'Video',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w600,
+              if (durationStr.isNotEmpty)
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(150),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.videocam_rounded, color: Colors.white, size: 12),
+                        const SizedBox(width: 4),
+                        Text(
+                          durationStr,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
       );
     }
 
-    // Fallback placeholder while thumbnail initializes
-    return Container(
-      width: 175,
-      height: 130,
-      color: const Color(0xFF1B272E),
-      child: const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.videocam_rounded, color: Colors.white30, size: 36),
-            SizedBox(height: 4),
-            Text(
-              'Video',
-              style: TextStyle(color: Colors.white54, fontSize: 11),
+    // Modern WhatsApp-style smooth placeholder matching the exact aspect ratio
+    return ClipRRect(
+      child: AspectRatio(
+        aspectRatio: aspect,
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF1B272E),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF1E2B34),
+                Color(0xFF141D22),
+              ],
             ),
-          ],
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            fit: StackFit.expand,
+            children: [
+              const Center(
+                child: Icon(Icons.videocam_rounded, color: Colors.white24, size: 36),
+              ),
+              if (durationStr.isNotEmpty)
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(150),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.videocam_rounded, color: Colors.white, size: 12),
+                        const SizedBox(width: 4),
+                        Text(
+                          durationStr,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1058,19 +1104,26 @@ class _InlineImageThumbnail extends StatefulWidget {
 }
 
 class _InlineImageThumbnailState extends State<_InlineImageThumbnail> {
+  static final Map<int, double> _aspectCache = {};
   double? _aspectRatio;
 
   @override
   void initState() {
     super.initState();
-    _resolveAspect();
+    _aspectRatio = _aspectCache[widget.imageBytes.hashCode];
+    if (_aspectRatio == null) {
+      _resolveAspect();
+    }
   }
 
   @override
   void didUpdateWidget(covariant _InlineImageThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.imageBytes != widget.imageBytes) {
-      _resolveAspect();
+      _aspectRatio = _aspectCache[widget.imageBytes.hashCode];
+      if (_aspectRatio == null) {
+        _resolveAspect();
+      }
     }
   }
 
@@ -1086,6 +1139,7 @@ class _InlineImageThumbnailState extends State<_InlineImageThumbnail> {
               final rawAspect = w / h;
               // Max vertical ratio 9:16 (0.5625), max horizontal ratio 16:9 (1.777)
               final clamped = rawAspect.clamp(9.0 / 16.0, 16.0 / 9.0);
+              _aspectCache[widget.imageBytes.hashCode] = clamped;
               setState(() {
                 _aspectRatio = clamped;
               });

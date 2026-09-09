@@ -304,6 +304,30 @@ class ChatRepository {
     return list;
   }
 
+  /// Retrieves a specific message by its ID
+  Future<MessageModel?> getMessageById(String messageId) async {
+    for (final list in _transientMessages.values) {
+      final match = list.where((m) => m.id == messageId);
+      if (match.isNotEmpty) return match.first;
+    }
+    final db = await appDatabase.database;
+    final maps = await db.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
+    if (maps.isNotEmpty) {
+      var model = MessageModel.fromMap(maps.first);
+      if (model.ciphertext.startsWith('FILE_REF:')) {
+        final resolved = await _resolveCiphertext(model.ciphertext);
+        model = model.copyWith(ciphertext: resolved);
+      }
+      return model;
+    }
+    return null;
+  }
+
   /// Retrieves the latest message for a conversation
   Future<MessageModel?> getLastMessage(String conversationId) async {
     MessageModel? dbLast;

@@ -29,7 +29,16 @@ class ChatListScreen extends StatefulWidget {
 }
 
 class _ChatListScreenState extends State<ChatListScreen> {
-  List<ConversationModel> _conversations = [];
+  // In-memory cache preserved across widget rebuilds and screen transitions
+  static List<ConversationModel> _cachedConversations = [];
+  static bool _hasLoadedInitial = false;
+  static final Map<String, String> _snippetCache = {};
+  static final Map<String, MessageStatus> _statusCache = {};
+  static final Map<String, bool> _isMeCache = {};
+  static final Map<String, int> _unreadCache = {};
+
+  late List<ConversationModel> _conversations;
+  late bool _isLoading;
   StreamSubscription? _messageSub;
   StreamSubscription? _receiptSub;
   StreamSubscription? _readReceiptSub;
@@ -43,6 +52,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
   @override
   void initState() {
     super.initState();
+    _conversations = List.from(_cachedConversations);
+    _isLoading = !_hasLoadedInitial && _cachedConversations.isEmpty;
     _loadConversations();
 
     _searchFocusNode.addListener(() {
@@ -87,15 +98,25 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
     try {
       final convs = await chatRepo.getConversations();
-      if (mounted) {
-        setState(() {
-          _conversations = convs;
-        });
+
+      // 1. Immediately attach cached metadata so conversations render complete with previews instantly
+      for (final conv in convs) {
+        if (_snippetCache.containsKey(conv.id)) {
+          conv.lastMessageSnippet = _snippetCache[conv.id];
+        }
+        if (_statusCache.containsKey(conv.id)) {
+          conv.lastMessageStatus = _statusCache[conv.id];
+        }
+        if (_isMeCache.containsKey(conv.id)) {
+          conv.lastMessageIsMe = _isMeCache[conv.id] ?? false;
+        }
+        if (_unreadCache.containsKey(conv.id)) {
+          conv.unreadCount = _unreadCache[conv.id] ?? 0;
+        }
       }
 
-      // Decrypt last message preview and calculate unread count for each conversation
-      bool hasUpdates = false;
-      for (final conv in convs) {
+      // 2. Fetch/decrypt updated last messages and unread counts in parallel
+      await Future.wait(convs.map((conv) async {
         if (conv.contact != null) {
           final lastMsg = await chatRepo.getLastMessage(conv.id);
           if (lastMsg != null) {
@@ -112,20 +133,38 @@ class _ChatListScreenState extends State<ChatListScreen> {
             conv.lastMessageSnippet = displaySnippet;
             conv.lastMessageStatus = lastMsg.status;
             conv.lastMessageIsMe = lastMsg.senderId.trim().toUpperCase() == widget.identity.deviceId.trim().toUpperCase();
-            hasUpdates = true;
+
+            _snippetCache[conv.id] = displaySnippet;
+            _statusCache[conv.id] = lastMsg.status;
+            _isMeCache[conv.id] = conv.lastMessageIsMe;
+          } else {
+            conv.lastMessageSnippet = null;
+            _snippetCache.remove(conv.id);
+            _statusCache.remove(conv.id);
           }
+
           final unread = await chatRepo.getUnreadCount(conv.id, widget.identity.deviceId);
-          if (conv.unreadCount != unread) {
-            conv.unreadCount = unread;
-            hasUpdates = true;
-          }
+          conv.unreadCount = unread;
+          _unreadCache[conv.id] = unread;
         }
-      }
-      if (hasUpdates && mounted) {
-        setState(() {});
+      }));
+
+      _cachedConversations = List.from(convs);
+      _hasLoadedInitial = true;
+
+      if (mounted) {
+        setState(() {
+          _conversations = convs;
+          _isLoading = false;
+        });
       }
     } catch (e) {
       debugPrint('[ChatList] Error loading conversations: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -135,12 +174,21 @@ class _ChatListScreenState extends State<ChatListScreen> {
       conv.unreadCount = 0; // Immediate UI update to hide badge
     });
 
-    // Fast pre-fetch messages so conversation screen opens with all messages already loaded
+    // Fast pre-fetch messages and pre-warm media RAM cache so conversation screen opens with all media already rendered
     final chatRepo = context.read<ChatRepository>();
     final connManager = context.read<ConnectionManager>();
     final msgs = await chatRepo.getMessages(conv.id);
     for (final m in msgs) {
       await connManager.decryptMessageContent(m, conv.contact!);
+      if (m.messageType == MessageType.image || m.messageType == MessageType.video) {
+        final payload = EphemeralMediaPayload.tryParse(m.decryptedContent ?? '');
+        if (payload != null) {
+          final cacheKey = payload.mediaKeyBase64.isNotEmpty ? payload.mediaKeyBase64 : m.id;
+          if (connManager.ephemeralMediaService.getCachedMedia(cacheKey) == null) {
+            connManager.ephemeralMediaService.getCachedMediaAsync(cacheKey);
+          }
+        }
+      }
     }
 
     if (!mounted) return;
@@ -406,21 +454,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
               ),
             // Conversation list or tabs
             Expanded(
-              child: filteredConvs.isEmpty
-                  ? (_searchQuery.isNotEmpty
-                      ? Center(
-                          child: Text(
-                            detectedDeviceId != null && !isOwnDevice && !alreadyExists
-                                ? 'Tap "Add" above to message this device'
-                                : 'No chats found for "$_searchQuery"',
-                            style: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
-                          ),
-                        )
-                      : _buildEmptyState())
-                  : RefreshIndicator(
-                      onRefresh: _loadConversations,
-                      color: MineTheme.primaryTeal,
-                      child: ListView.builder(
+              child: _isLoading && filteredConvs.isEmpty
+                  ? const SizedBox.shrink()
+                  : filteredConvs.isEmpty
+                      ? (_searchQuery.isNotEmpty
+                          ? Center(
+                              child: Text(
+                                detectedDeviceId != null && !isOwnDevice && !alreadyExists
+                                    ? 'Tap "Add" above to message this device'
+                                    : 'No chats found for "$_searchQuery"',
+                                style: const TextStyle(color: MineTheme.textMuted, fontSize: 14),
+                              ),
+                            )
+                          : _buildEmptyState())
+                      : RefreshIndicator(
+                          onRefresh: _loadConversations,
+                          color: MineTheme.primaryTeal,
+                          child: ListView.builder(
                             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                             itemCount: filteredConvs.length,
                             itemBuilder: (context, index) {
@@ -605,6 +655,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
               final msgs = await chatRepo.getMessages(conv.id);
               await connManager.ephemeralMediaService.deleteMessagesMedia(msgs);
               await chatRepo.deleteConversation(conv.id);
+              _snippetCache.remove(conv.id);
+              _statusCache.remove(conv.id);
+              _isMeCache.remove(conv.id);
+              _unreadCache.remove(conv.id);
+              _cachedConversations.removeWhere((c) => c.id == conv.id);
               _loadConversations();
             },
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
@@ -644,6 +699,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
               final msgs = await chatRepo.getMessages(conv.id);
               await connManager.ephemeralMediaService.deleteMessagesMedia(msgs);
               await contactRepo.deleteContact(contact.id);
+              _snippetCache.remove(conv.id);
+              _statusCache.remove(conv.id);
+              _isMeCache.remove(conv.id);
+              _unreadCache.remove(conv.id);
+              _cachedConversations.removeWhere((c) => c.id == conv.id || c.contact?.id == contact.id);
               if (mounted) {
                 _loadConversations();
               }

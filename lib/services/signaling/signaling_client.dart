@@ -110,9 +110,11 @@ class SignalingClient extends ChangeNotifier {
         return;
       }
 
-      // 1. Subscribe to own personal inbox
+      // 1. Subscribe to own personal inbox & retained mailbox queue
       final inboxTopic = 'mine/v1/inbox/$deviceId';
       client.subscribe(inboxTopic, MqttQos.atLeastOnce);
+      final mailboxTopic = 'mine/v1/mailbox/$deviceId/#';
+      client.subscribe(mailboxTopic, MqttQos.atLeastOnce);
 
       // 2. Publish online presence (retained status only, no public keys)
       _publishPresence('online');
@@ -192,14 +194,19 @@ class SignalingClient extends ChangeNotifier {
       final payloadString = _decodePayload(msg);
       if (payloadString.isEmpty) continue;
 
-      if (topic == 'mine/v1/inbox/$deviceId') {
+      if (topic == 'mine/v1/inbox/$deviceId' || topic.startsWith('mine/v1/mailbox/$deviceId/')) {
         try {
           final map = jsonDecode(payloadString) as Map<String, dynamic>;
           final envelope = SignalingEnvelope.fromJson(map);
           if (envelope.type != 'ping' && envelope.type != 'pong') {
-            debugPrint('[SignalingClient] Received incoming ${envelope.type} from ${envelope.from}');
+            debugPrint('[SignalingClient] Received incoming ${envelope.type} from ${envelope.from} on $topic');
           }
           _envelopeController.add(envelope);
+
+          // If received from retained mailbox queue, immediately wipe retained message from broker
+          if (topic.startsWith('mine/v1/mailbox/$deviceId/')) {
+            clearMailboxMessage(topic);
+          }
         } catch (e) {
           debugPrint('[SignalingClient] Error parsing envelope (payload: "$payloadString"): $e');
         }
@@ -329,20 +336,65 @@ class SignalingClient extends ChangeNotifier {
     }
   }
 
-  void sendEnvelope(SignalingEnvelope envelope) {
+  void clearMailboxMessage(String mailboxTopic) {
+    if (_client == null || _state != SignalingServerState.connected) return;
+    try {
+      final builder = MqttClientPayloadBuilder();
+      builder.addUTF8String('');
+      _client?.publishMessage(
+        mailboxTopic,
+        MqttQos.atLeastOnce,
+        builder.payload!,
+        retain: true,
+      );
+      debugPrint('[SignalingClient] Cleared mailbox topic: $mailboxTopic');
+    } catch (e) {
+      debugPrint('[SignalingClient] Error clearing mailbox topic: $e');
+    }
+  }
+
+  void clearMessageMailbox(String recipientDeviceId, String messageId) {
+    final toUpper = recipientDeviceId.trim().toUpperCase();
+    clearMailboxMessage('mine/v1/mailbox/$toUpper/$messageId');
+  }
+
+  void sendEnvelope(SignalingEnvelope envelope, {bool retainInMailbox = false}) {
     if (_state != SignalingServerState.connected || _client == null) {
       throw StateError('Relay client is not connected');
     }
     final builder = MqttClientPayloadBuilder();
     builder.addUTF8String(envelope.toJsonString());
-    if (envelope.type != 'ping' && envelope.type != 'pong') {
-      debugPrint('[SignalingClient] Publishing envelope to mine/v1/inbox/${envelope.to} (type: ${envelope.type})');
+
+    final toUpper = envelope.to.trim().toUpperCase();
+
+    // If retainInMailbox is requested or if it is a user message/receipt, publish as retained on recipient mailbox
+    final isRetainable = retainInMailbox ||
+        ((envelope.type == 'message' || envelope.type == 'delivery_receipt' || envelope.type == 'read_receipt' || envelope.type == 'history_toggle') &&
+            envelope.messageId != null &&
+            envelope.messageId!.isNotEmpty);
+
+    if (isRetainable && envelope.messageId != null && envelope.messageId!.isNotEmpty) {
+      final key = envelope.type == 'message' ? envelope.messageId! : '${envelope.type}_${envelope.messageId!}';
+      final mailboxTopic = 'mine/v1/mailbox/$toUpper/$key';
+      if (envelope.type != 'ping' && envelope.type != 'pong') {
+        debugPrint('[SignalingClient] Publishing retained envelope to mailbox: $mailboxTopic (type: ${envelope.type})');
+      }
+      _client?.publishMessage(
+        mailboxTopic,
+        MqttQos.atLeastOnce,
+        builder.payload!,
+        retain: true,
+      );
+    } else {
+      if (envelope.type != 'ping' && envelope.type != 'pong') {
+        debugPrint('[SignalingClient] Publishing envelope to mine/v1/inbox/${envelope.to} (type: ${envelope.type})');
+      }
+      _client?.publishMessage(
+        'mine/v1/inbox/${envelope.to}',
+        MqttQos.atLeastOnce,
+        builder.payload!,
+      );
     }
-    _client?.publishMessage(
-      'mine/v1/inbox/${envelope.to}',
-      MqttQos.atLeastOnce,
-      builder.payload!,
-    );
   }
 
   void _handleDisconnect() {

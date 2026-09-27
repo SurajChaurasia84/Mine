@@ -15,6 +15,7 @@ import '../../data/repositories/contact_repository.dart';
 import '../../services/connection_manager/connection_manager.dart';
 import '../../services/connection_manager/peer_connection_state.dart';
 import '../../services/media/ephemeral_media_service.dart';
+import '../../services/media/video_thumbnail_manager.dart';
 import '../contacts/nickname_edit_dialog.dart';
 import 'widgets/chat_doodle_painter.dart';
 import 'widgets/chat_input_bar.dart';
@@ -200,19 +201,24 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
 
     final msgs = await chatRepo.getMessages(widget.conversation.id);
 
-    // Decrypt all messages for display & pre-warm media bytes in RAM cache
-    for (final m in msgs) {
+    // Decrypt all messages for display & pre-warm media bytes in RAM cache in parallel
+    await Future.wait(msgs.map((m) async {
       await connManager.decryptMessageContent(m, _currentContact);
       if (m.messageType == MessageType.image || m.messageType == MessageType.video) {
         final payload = EphemeralMediaPayload.tryParse(m.decryptedContent ?? '');
         if (payload != null) {
           final cacheKey = payload.mediaKeyBase64.isNotEmpty ? payload.mediaKeyBase64 : m.id;
-          if (connManager.ephemeralMediaService.getCachedMedia(cacheKey) == null) {
-            connManager.ephemeralMediaService.getCachedMediaAsync(cacheKey);
+          final bytes = await connManager.ephemeralMediaService.getCachedMediaAsync(cacheKey);
+          if (bytes != null && bytes.isNotEmpty) {
+            if (m.messageType == MessageType.image) {
+              ImageDimensionResolver.getCachedAspect(bytes);
+            } else if (m.messageType == MessageType.video) {
+              VideoThumbnailManager.loadThumbnail(bytes, messageId: m.id);
+            }
           }
         }
       }
-    }
+    }));
 
     if (mounted) {
       setState(() {

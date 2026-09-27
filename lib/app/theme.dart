@@ -18,7 +18,22 @@ class MineTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
+      canvasColor: backgroundDark,
       scaffoldBackgroundColor: backgroundDark,
+      cardColor: surfaceDark,
+      dialogTheme: const DialogThemeData(
+        backgroundColor: surfaceDark,
+      ),
+      splashColor: const Color(0xFF202C33),
+      highlightColor: const Color(0xFF202C33).withValues(alpha: 0.5),
+      hoverColor: const Color(0xFF182229),
+      focusColor: const Color(0xFF202C33).withValues(alpha: 0.3),
+      listTileTheme: const ListTileThemeData(
+        tileColor: Colors.transparent,
+        selectedTileColor: Color(0xFF202C33),
+        iconColor: textMuted,
+        textColor: textLight,
+      ),
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: ZoomPageTransitionsBuilder(),

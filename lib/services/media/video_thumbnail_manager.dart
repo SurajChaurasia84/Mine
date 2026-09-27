@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -13,6 +14,7 @@ class VideoThumbnailInfo {
   final VideoPlayerController? controller;
   final bool isReady;
   final File? file;
+  final Uint8List? thumbnailBytes;
 
   const VideoThumbnailInfo({
     required this.aspectRatio,
@@ -21,6 +23,7 @@ class VideoThumbnailInfo {
     this.controller,
     required this.isReady,
     this.file,
+    this.thumbnailBytes,
   });
 
   VideoThumbnailInfo copyWith({
@@ -30,6 +33,7 @@ class VideoThumbnailInfo {
     VideoPlayerController? controller,
     bool? isReady,
     File? file,
+    Uint8List? thumbnailBytes,
   }) {
     return VideoThumbnailInfo(
       aspectRatio: aspectRatio ?? this.aspectRatio,
@@ -38,6 +42,7 @@ class VideoThumbnailInfo {
       controller: controller ?? this.controller,
       isReady: isReady ?? this.isReady,
       file: file ?? this.file,
+      thumbnailBytes: thumbnailBytes ?? this.thumbnailBytes,
     );
   }
 }
@@ -92,12 +97,64 @@ class VideoThumbnailManager {
     return '$minutes:$seconds';
   }
 
-  /// Synchronously returns cached thumbnail information if already loaded
-  static VideoThumbnailInfo? getCachedInfo(Uint8List bytes) {
+  /// Saves metadata (aspect ratio & duration) to ROM for instant fresh-start rendering
+  static void _saveMetaToDisk(String key, double aspect, int durationMs, String durStr) {
+    if (kIsWeb) return;
+    try {
+      final dir = _mediaDir;
+      if (dir == null || !dir.existsSync()) return;
+      final file = File('${dir.path}/vmeta_$key.json');
+      file.writeAsStringSync(jsonEncode({
+        'aspect': aspect,
+        'durationMs': durationMs,
+        'durStr': durStr,
+      }), flush: true);
+    } catch (_) {}
+  }
+
+  /// Saves static thumbnail JPEG bytes to ROM for instant 0ms fresh-start display
+  static Future<void> saveThumbnailToDisk(Uint8List bytes, Uint8List thumbBytes, {String? messageId}) async {
+    if (kIsWeb || thumbBytes.isEmpty) return;
+    try {
+      final dir = await _getMediaDirectory();
+      if (dir == null) return;
+      final fileKey = getHashKey(bytes).abs().toString();
+      final thumbFile = File('${dir.path}/vthumb_$fileKey.jpg');
+      await thumbFile.writeAsBytes(thumbBytes, flush: true);
+      if (messageId != null && messageId.isNotEmpty) {
+        final mThumb = File('${dir.path}/vthumb_$messageId.jpg');
+        await mThumb.writeAsBytes(thumbBytes, flush: true);
+      }
+      final key = getHashKey(bytes);
+      final existing = _infoCache[key];
+      if (existing != null) {
+        _infoCache[key] = existing.copyWith(thumbnailBytes: thumbBytes, isReady: true);
+      }
+    } catch (_) {}
+  }
+
+  /// Retrieves persistent static thumbnail bytes from ROM if previously saved
+  static Uint8List? getPersistentThumbnail(String? messageId, [Uint8List? bytes]) {
+    if (kIsWeb || _mediaDir == null || !_mediaDir!.existsSync()) return null;
+    try {
+      if (messageId != null && messageId.isNotEmpty) {
+        final f = File('${_mediaDir!.path}/vthumb_$messageId.jpg');
+        if (f.existsSync() && f.lengthSync() > 0) return f.readAsBytesSync();
+      }
+      if (bytes != null && bytes.isNotEmpty) {
+        final fileKey = getHashKey(bytes).abs().toString();
+        final f = File('${_mediaDir!.path}/vthumb_$fileKey.jpg');
+        if (f.existsSync() && f.lengthSync() > 0) return f.readAsBytesSync();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Synchronously returns cached thumbnail information from RAM or ROM
+  static VideoThumbnailInfo? getCachedInfo(Uint8List bytes, {String? messageId}) {
     final key = getHashKey(bytes);
     final info = _infoCache[key];
     if (info != null) {
-      // Touch LRU
       _touchLru(key);
       final activeController = _controllerPool[key];
       if (activeController != null && activeController.value.isInitialized) {
@@ -105,6 +162,44 @@ class VideoThumbnailManager {
       }
       return info;
     }
+
+    // Check ROM cache for persistent metadata & static thumbnail
+    if (!kIsWeb && _mediaDir != null && _mediaDir!.existsSync()) {
+      try {
+        final fileKey = getHashKey(bytes).abs().toString();
+        final primaryKey = (messageId != null && messageId.isNotEmpty) ? messageId : fileKey;
+        File metaFile = File('${_mediaDir!.path}/vmeta_$primaryKey.json');
+        if (!metaFile.existsSync()) {
+          metaFile = File('${_mediaDir!.path}/vmeta_$fileKey.json');
+        }
+
+        File thumbFile = File('${_mediaDir!.path}/vthumb_$primaryKey.jpg');
+        if (!thumbFile.existsSync()) {
+          thumbFile = File('${_mediaDir!.path}/vthumb_$fileKey.jpg');
+        }
+
+        if (metaFile.existsSync() && metaFile.lengthSync() > 0) {
+          final jsonStr = metaFile.readAsStringSync();
+          final map = jsonDecode(jsonStr) as Map<String, dynamic>;
+          final aspect = (map['aspect'] as num?)?.toDouble() ?? (16.0 / 9.0);
+          final durationMs = (map['durationMs'] as num?)?.toInt() ?? 0;
+          final durStr = map['durStr'] as String? ?? '';
+          final hasThumb = thumbFile.existsSync() && thumbFile.lengthSync() > 0;
+          final thumbBytes = hasThumb ? thumbFile.readAsBytesSync() : null;
+
+          final cachedInfo = VideoThumbnailInfo(
+            aspectRatio: aspect,
+            duration: Duration(milliseconds: durationMs),
+            durationString: durStr,
+            isReady: hasThumb,
+            thumbnailBytes: thumbBytes,
+          );
+          _infoCache[key] = cachedInfo;
+          return cachedInfo;
+        }
+      } catch (_) {}
+    }
+
     return null;
   }
 
@@ -165,6 +260,7 @@ class VideoThumbnailManager {
   }) async {
     VideoPlayerController? controller;
     File? videoFile;
+    final fileKey = getHashKey(bytes).abs().toString();
 
     try {
       if (kIsWeb) {
@@ -194,6 +290,15 @@ class VideoThumbnailManager {
       final duration = controller.value.duration;
       final durStr = formatDuration(duration);
 
+      // Persist metadata to ROM (< 100 bytes) for zero-flicker startup
+      _saveMetaToDisk(fileKey, clampedAspect, duration.inMilliseconds, durStr);
+      if (messageId != null && messageId.isNotEmpty) {
+        _saveMetaToDisk(messageId, clampedAspect, duration.inMilliseconds, durStr);
+      }
+
+      // Check if a saved thumbnail image already exists on ROM
+      final existingThumb = getPersistentThumbnail(messageId, bytes);
+
       final info = VideoThumbnailInfo(
         aspectRatio: clampedAspect,
         duration: duration,
@@ -201,6 +306,7 @@ class VideoThumbnailManager {
         controller: controller,
         isReady: true,
         file: videoFile,
+        thumbnailBytes: existingThumb,
       );
 
       _putController(key, controller);
@@ -242,6 +348,59 @@ class VideoThumbnailManager {
         } catch (_) {}
       }
     }
+  }
+
+  /// Deletes cached video controller, thumbnail image, metadata, and disk file for a given message or bytes
+  static Future<void> deleteVideo({String? messageId, Uint8List? bytes}) async {
+    if (bytes != null) {
+      final key = getHashKey(bytes);
+      final controller = _controllerPool.remove(key);
+      try {
+        controller?.dispose();
+      } catch (_) {}
+      _lruKeys.remove(key);
+      _infoCache.remove(key);
+    }
+
+    if (kIsWeb) return;
+
+    try {
+      final dir = await _getMediaDirectory();
+      if (dir == null) return;
+
+      // Delete by messageId
+      if (messageId != null && messageId.isNotEmpty) {
+        final file = File('${dir.path}/vid_$messageId.mp4');
+        if (file.existsSync()) {
+          await file.delete();
+        }
+        final thumbFile = File('${dir.path}/vthumb_$messageId.jpg');
+        if (thumbFile.existsSync()) {
+          await thumbFile.delete();
+        }
+        final metaFile = File('${dir.path}/vmeta_$messageId.json');
+        if (metaFile.existsSync()) {
+          await metaFile.delete();
+        }
+      }
+
+      // Delete by bytes hash
+      if (bytes != null) {
+        final fileKey = getHashKey(bytes).abs().toString();
+        final file = File('${dir.path}/vid_$fileKey.mp4');
+        if (file.existsSync()) {
+          await file.delete();
+        }
+        final thumbFile = File('${dir.path}/vthumb_$fileKey.jpg');
+        if (thumbFile.existsSync()) {
+          await thumbFile.delete();
+        }
+        final metaFile = File('${dir.path}/vmeta_$fileKey.json');
+        if (metaFile.existsSync()) {
+          await metaFile.delete();
+        }
+      }
+    } catch (_) {}
   }
 
   /// Cleans up controllers when leaving or logging out

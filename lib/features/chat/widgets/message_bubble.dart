@@ -243,6 +243,8 @@ class MessageBubble extends StatelessWidget {
     final is24 = DateFormatter.is24HourFormat(context);
     final timeSpacerWidth = isMe ? (is24 ? 58.0 : 70.0) : (is24 ? 42.0 : 50.0);
 
+    final bubbleWidth = (MediaQuery.of(context).size.width * 0.74).clamp(240.0, 285.0);
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: GestureDetector(
@@ -252,10 +254,8 @@ class MessageBubble extends StatelessWidget {
           }
         },
         child: Container(
+          width: bubbleWidth,
           margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-          constraints: const BoxConstraints(
-            maxWidth: 190.0,
-          ),
           decoration: BoxDecoration(
             color: bubbleColor,
             borderRadius: borderRadius,
@@ -270,7 +270,7 @@ class MessageBubble extends StatelessWidget {
           child: ClipRRect(
             borderRadius: borderRadius,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (message.replyText != null || message.replySenderName != null)
@@ -279,7 +279,7 @@ class MessageBubble extends StatelessWidget {
                     child: _buildQuotedReplyBox(context),
                   ),
 
-                // Inline Image / Video Thumbnail with Original Ratio & Compact Size
+                // Inline Image / Video Thumbnail with Original Ratio & Full Width
                 _InlineMediaContent(
                   message: message,
                   payload: payload,
@@ -291,32 +291,35 @@ class MessageBubble extends StatelessWidget {
                 // Caption if present
                 if (hasCaption) ...[
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
-                    child: Stack(
-                      children: [
-                        _buildMessageTextWithSpacer(context, caption, timeSpacerWidth),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Text(
-                                DateFormatter.formatBubbleTime(message.timestamp, context),
-                                style: const TextStyle(
-                                  color: MineTheme.textMuted,
-                                  fontSize: 10.5,
+                    padding: const EdgeInsets.fromLTRB(9, 6, 9, 6),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: Stack(
+                        children: [
+                          _buildMessageTextWithSpacer(context, caption, timeSpacerWidth),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text(
+                                  DateFormatter.formatBubbleTime(message.timestamp, context),
+                                  style: const TextStyle(
+                                    color: MineTheme.textMuted,
+                                    fontSize: 10.5,
+                                  ),
                                 ),
-                              ),
-                              if (isMe) ...[
-                                const SizedBox(width: 3),
-                                _buildStatusIcon(message.status),
+                                if (isMe) ...[
+                                  const SizedBox(width: 3),
+                                  _buildStatusIcon(message.status),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -677,13 +680,8 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
           _loadMedia();
         }
       },
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          minWidth: 100,
-          maxWidth: 190,
-          minHeight: 80,
-          maxHeight: 230,
-        ),
+      child: SizedBox(
+        width: double.infinity,
         child: Stack(
           alignment: Alignment.center,
           children: [
@@ -693,8 +691,8 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
                   : _buildImageCard()
             else
               Container(
-                height: 130,
-                width: 160,
+                height: 160,
+                width: double.infinity,
                 color: const Color(0xFF1B272E),
                 child: _buildPlaceholder(isVideo),
               ),
@@ -1025,29 +1023,36 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
     final thumbBytes = info?.thumbnailBytes ?? widget.initialThumbnailBytes;
     final hasThumbnail = thumbBytes != null && thumbBytes.isNotEmpty;
     final isReady = info != null && info.controller != null && info.controller!.value.isInitialized;
-    final aspect = info?.aspectRatio ?? (16.0 / 9.0);
+    final rawAspect = info?.aspectRatio ?? (16.0 / 9.0);
+    final aspect = rawAspect.clamp(0.72, 1.78);
     final durationStr = info?.durationString ?? '';
 
     // If static thumbnail is already saved on ROM -> Instant 0ms display with zero flicker!
     if (hasThumbnail) {
-      return ClipRRect(
-        child: AspectRatio(
-          aspectRatio: aspect,
-          child: Stack(
-            alignment: Alignment.center,
-            fit: StackFit.expand,
-            children: [
-              Image.memory(
-                thumbBytes,
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-              ),
-              // Dark dim overlay matching original styling
-              Container(color: Colors.black.withAlpha(45)),
-              // Top Video Duration badge
-              if (durationStr.isNotEmpty)
-                _buildDurationBadge(durationStr),
-            ],
+      return ConstrainedBox(
+        constraints: const BoxConstraints(
+          minHeight: 130,
+          maxHeight: 290,
+        ),
+        child: ClipRRect(
+          child: AspectRatio(
+            aspectRatio: aspect,
+            child: Stack(
+              alignment: Alignment.center,
+              fit: StackFit.expand,
+              children: [
+                Image.memory(
+                  thumbBytes,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                ),
+                // Dark dim overlay matching original styling
+                Container(color: Colors.black.withAlpha(45)),
+                // Top Video Duration badge
+                if (durationStr.isNotEmpty)
+                  _buildDurationBadge(durationStr),
+              ],
+            ),
           ),
         ),
       );
@@ -1059,64 +1064,76 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
       final videoWidth = size.width > 0 ? size.width : 160.0;
       final videoHeight = size.height > 0 ? size.height : 90.0;
 
-      return ClipRRect(
-        child: AspectRatio(
-          aspectRatio: aspect,
-          child: Stack(
-            alignment: Alignment.center,
-            fit: StackFit.expand,
-            children: [
-              RepaintBoundary(
-                key: _repaintKey,
-                child: FittedBox(
-                  fit: BoxFit.cover,
-                  clipBehavior: Clip.hardEdge,
-                  child: SizedBox(
-                    width: videoWidth,
-                    height: videoHeight,
-                    child: VideoPlayer(controller),
+      return ConstrainedBox(
+        constraints: const BoxConstraints(
+          minHeight: 130,
+          maxHeight: 290,
+        ),
+        child: ClipRRect(
+          child: AspectRatio(
+            aspectRatio: aspect,
+            child: Stack(
+              alignment: Alignment.center,
+              fit: StackFit.expand,
+              children: [
+                RepaintBoundary(
+                  key: _repaintKey,
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    clipBehavior: Clip.hardEdge,
+                    child: SizedBox(
+                      width: videoWidth,
+                      height: videoHeight,
+                      child: VideoPlayer(controller),
+                    ),
                   ),
                 ),
-              ),
 
-              // Dark dim overlay for high contrast
-              Container(color: Colors.black.withAlpha(45)),
+                // Dark dim overlay for high contrast
+                Container(color: Colors.black.withAlpha(45)),
 
-              // Top Video Duration badge
-              if (durationStr.isNotEmpty)
-                _buildDurationBadge(durationStr),
-            ],
+                // Top Video Duration badge
+                if (durationStr.isNotEmpty)
+                  _buildDurationBadge(durationStr),
+              ],
+            ),
           ),
         ),
       );
     }
 
     // Modern WhatsApp-style smooth placeholder matching the exact aspect ratio
-    return ClipRRect(
-      child: AspectRatio(
-        aspectRatio: aspect,
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF1B272E),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color(0xFF1E2B34),
-                Color(0xFF141D22),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(
+        minHeight: 130,
+        maxHeight: 290,
+      ),
+      child: ClipRRect(
+        child: AspectRatio(
+          aspectRatio: aspect,
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFF1B272E),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xFF1E2B34),
+                  Color(0xFF141D22),
+                ],
+              ),
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              fit: StackFit.expand,
+              children: [
+                const Center(
+                  child: Icon(Icons.videocam_rounded, color: Colors.white24, size: 36),
+                ),
+                if (durationStr.isNotEmpty)
+                  _buildDurationBadge(durationStr),
               ],
             ),
-          ),
-          child: Stack(
-            alignment: Alignment.center,
-            fit: StackFit.expand,
-            children: [
-              const Center(
-                child: Icon(Icons.videocam_rounded, color: Colors.white24, size: 36),
-              ),
-              if (durationStr.isNotEmpty)
-                _buildDurationBadge(durationStr),
-            ],
           ),
         ),
       ),
@@ -1287,20 +1304,27 @@ class _InlineImageThumbnailState extends State<_InlineImageThumbnail> {
 
   @override
   Widget build(BuildContext context) {
-    final aspect = _aspectRatio ?? (1.0);
+    final rawAspect = _aspectRatio ?? (1.0);
+    final aspect = rawAspect.clamp(0.72, 1.78);
 
-    return ClipRRect(
-      child: AspectRatio(
-        aspectRatio: aspect,
-        child: Image.memory(
-          widget.imageBytes,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          errorBuilder: (context, error, stackTrace) {
-            return const Center(
-              child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 36),
-            );
-          },
+    return ConstrainedBox(
+      constraints: const BoxConstraints(
+        minHeight: 130,
+        maxHeight: 290,
+      ),
+      child: ClipRRect(
+        child: AspectRatio(
+          aspectRatio: aspect,
+          child: Image.memory(
+            widget.imageBytes,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            errorBuilder: (context, error, stackTrace) {
+              return const Center(
+                child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 36),
+              );
+            },
+          ),
         ),
       ),
     );

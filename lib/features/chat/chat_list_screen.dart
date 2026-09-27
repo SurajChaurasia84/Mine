@@ -13,11 +13,13 @@ import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/contact_repository.dart';
 import '../../services/connection_manager/connection_manager.dart';
 import '../../services/media/ephemeral_media_service.dart';
+import '../../services/media/video_thumbnail_manager.dart';
 import '../../services/signaling/signaling_client.dart';
 import '../contacts/add_contact_screen.dart';
 import '../contacts/qr_display_screen.dart';
 import '../settings/settings_screen.dart';
 import 'chat_conversation_screen.dart';
+import 'widgets/message_bubble.dart';
 
 class ChatListScreen extends StatefulWidget {
   final KeyPairBundle identity;
@@ -137,6 +139,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
             _snippetCache[conv.id] = displaySnippet;
             _statusCache[conv.id] = lastMsg.status;
             _isMeCache[conv.id] = conv.lastMessageIsMe;
+
+            // Background pre-warm latest media bytes into RAM for instant chat open
+            if (lastMsg.messageType == MessageType.image || lastMsg.messageType == MessageType.video) {
+              final ep = EphemeralMediaPayload.tryParse(displaySnippet);
+              if (ep != null) {
+                final cacheKey = ep.mediaKeyBase64.isNotEmpty ? ep.mediaKeyBase64 : lastMsg.id;
+                connManager.ephemeralMediaService.getCachedMediaAsync(cacheKey).then((b) {
+                  if (b != null) {
+                    if (lastMsg.messageType == MessageType.image) {
+                      ImageDimensionResolver.getCachedAspect(b);
+                    } else if (lastMsg.messageType == MessageType.video) {
+                      VideoThumbnailManager.loadThumbnail(b, messageId: lastMsg.id);
+                    }
+                  }
+                });
+              }
+            }
           } else {
             conv.lastMessageSnippet = null;
             _snippetCache.remove(conv.id);
@@ -170,26 +189,34 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   void _openChat(ConversationModel conv) async {
     if (conv.contact == null) return;
+    _searchFocusNode.unfocus();
+    FocusScope.of(context).unfocus();
     setState(() {
       conv.unreadCount = 0; // Immediate UI update to hide badge
     });
 
-    // Fast pre-fetch messages and pre-warm media RAM cache so conversation screen opens with all media already rendered
+    // Fast parallel pre-fetch messages and pre-warm media RAM cache + aspect ratios + video thumbnails
     final chatRepo = context.read<ChatRepository>();
     final connManager = context.read<ConnectionManager>();
     final msgs = await chatRepo.getMessages(conv.id);
-    for (final m in msgs) {
+
+    await Future.wait(msgs.map((m) async {
       await connManager.decryptMessageContent(m, conv.contact!);
       if (m.messageType == MessageType.image || m.messageType == MessageType.video) {
         final payload = EphemeralMediaPayload.tryParse(m.decryptedContent ?? '');
         if (payload != null) {
           final cacheKey = payload.mediaKeyBase64.isNotEmpty ? payload.mediaKeyBase64 : m.id;
-          if (connManager.ephemeralMediaService.getCachedMedia(cacheKey) == null) {
-            connManager.ephemeralMediaService.getCachedMediaAsync(cacheKey);
+          final bytes = await connManager.ephemeralMediaService.getCachedMediaAsync(cacheKey);
+          if (bytes != null && bytes.isNotEmpty) {
+            if (m.messageType == MessageType.image) {
+              ImageDimensionResolver.getCachedAspect(bytes);
+            } else if (m.messageType == MessageType.video) {
+              VideoThumbnailManager.loadThumbnail(bytes, messageId: m.id);
+            }
           }
         }
       }
-    }
+    }));
 
     if (!mounted) return;
 
@@ -470,88 +497,99 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       : RefreshIndicator(
                           onRefresh: _loadConversations,
                           color: MineTheme.primaryTeal,
-                          child: ListView.builder(
-                            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                            itemCount: filteredConvs.length,
-                            itemBuilder: (context, index) {
-                              final conv = filteredConvs[index];
-                              final contact = conv.contact;
-                              if (contact == null) return const SizedBox.shrink();
+                          backgroundColor: MineTheme.surfaceDark,
+                          child: Theme(
+                            data: Theme.of(context).copyWith(
+                              splashFactory: NoSplash.splashFactory,
+                              splashColor: Colors.transparent,
+                              highlightColor: Colors.transparent,
+                            ),
+                            child: ListView.builder(
+                              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                              itemCount: filteredConvs.length,
+                              itemBuilder: (context, index) {
+                                final conv = filteredConvs[index];
+                                final contact = conv.contact;
+                                if (contact == null) return const SizedBox.shrink();
 
-                              return ListTile(
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                leading: UserAvatar(
-                                  nameOrId: contact.nickname.isNotEmpty ? contact.nickname : contact.id,
-                                  radius: 25,
-                                ),
-                                title: Text(
-                                  contact.nickname,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 16.5,
-                                    color: MineTheme.textLight,
+                                return ListTile(
+                                  splashColor: Colors.transparent,
+                                  hoverColor: Colors.transparent,
+                                  focusColor: Colors.transparent,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                  leading: UserAvatar(
+                                    nameOrId: contact.nickname.isNotEmpty ? contact.nickname : contact.id,
+                                    radius: 25,
                                   ),
-                                ),
-                                subtitle: Padding(
-                                  padding: const EdgeInsets.only(top: 2),
-                                  child: Row(
-                                    children: [
-                                      if (conv.lastMessageIsMe && conv.lastMessageStatus != null) ...[
-                                        _buildStatusIcon(conv.lastMessageStatus!),
-                                        const SizedBox(width: 4),
-                                      ],
-                                      Expanded(
-                                        child: _buildSnippet(
-                                          conv.lastMessageSnippet != null && conv.lastMessageSnippet!.isNotEmpty
-                                              ? conv.lastMessageSnippet!
-                                              : 'No messages yet',
-                                          conv.unreadCount > 0 ? MineTheme.textLight : MineTheme.textMuted,
-                                          13.5,
-                                          conv.unreadCount > 0 ? FontWeight.w600 : FontWeight.normal,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                trailing: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      DateFormatter.formatChatListTime(conv.lastMessageAt ?? conv.createdAt, context),
-                                      style: TextStyle(
-                                        color: conv.unreadCount > 0 ? MineTheme.accentGreen : MineTheme.textMuted,
-                                        fontSize: 11,
-                                        fontWeight: conv.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
-                                      ),
+                                  title: Text(
+                                    contact.nickname,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 16.5,
+                                      color: MineTheme.textLight,
                                     ),
-                                    if (conv.unreadCount > 0) ...[
-                                      const SizedBox(height: 5),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        constraints: const BoxConstraints(minWidth: 20),
-                                        decoration: BoxDecoration(
-                                          color: MineTheme.accentGreen,
-                                          borderRadius: BorderRadius.circular(10),
-                                        ),
-                                        child: Text(
-                                          conv.unreadCount > 99 ? '99+' : '${conv.unreadCount}',
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(
-                                            color: Color(0xFF00382B),
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.bold,
+                                  ),
+                                  subtitle: Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Row(
+                                      children: [
+                                        if (conv.lastMessageIsMe && conv.lastMessageStatus != null) ...[
+                                          _buildStatusIcon(conv.lastMessageStatus!),
+                                          const SizedBox(width: 4),
+                                        ],
+                                        Expanded(
+                                          child: _buildSnippet(
+                                            conv.lastMessageSnippet != null && conv.lastMessageSnippet!.isNotEmpty
+                                                ? conv.lastMessageSnippet!
+                                                : 'No messages yet',
+                                            conv.unreadCount > 0 ? MineTheme.textLight : MineTheme.textMuted,
+                                            13.5,
+                                            conv.unreadCount > 0 ? FontWeight.w600 : FontWeight.normal,
                                           ),
                                         ),
+                                      ],
+                                    ),
+                                  ),
+                                  trailing: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                        DateFormatter.formatChatListTime(conv.lastMessageAt ?? conv.createdAt, context),
+                                        style: TextStyle(
+                                          color: conv.unreadCount > 0 ? MineTheme.accentGreen : MineTheme.textMuted,
+                                          fontSize: 11,
+                                          fontWeight: conv.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
+                                        ),
                                       ),
+                                      if (conv.unreadCount > 0) ...[
+                                        const SizedBox(height: 5),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          constraints: const BoxConstraints(minWidth: 20),
+                                          decoration: BoxDecoration(
+                                            color: MineTheme.accentGreen,
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: Text(
+                                            conv.unreadCount > 99 ? '99+' : '${conv.unreadCount}',
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              color: Color(0xFF00382B),
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ],
-                                  ],
-                                ),
-                                onTap: () => _openChat(conv),
-                                onLongPress: () => _showConversationOptions(conv),
-                              );
-                            },
+                                  ),
+                                  onTap: () => _openChat(conv),
+                                  onLongPress: () => _showConversationOptions(conv),
+                                );
+                              },
+                            ),
                           ),
                         ),
             ),

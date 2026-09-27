@@ -1,6 +1,8 @@
 import 'dart:typed_data';
+import 'dart:ui' show ImageByteFormat;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
@@ -661,6 +663,12 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
     final isVideo = widget.message.messageType == MessageType.video ||
         widget.payload?.mediaType == 'video';
 
+    final persistentThumb = isVideo
+        ? VideoThumbnailManager.getPersistentThumbnail(widget.message.id, _mediaBytes)
+        : null;
+
+    final hasContent = (_mediaBytes != null && _mediaBytes!.isNotEmpty) || persistentThumb != null;
+
     return GestureDetector(
       onTap: () {
         if (_mediaBytes != null && _mediaBytes!.isNotEmpty) {
@@ -679,9 +687,9 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            if (_mediaBytes != null && _mediaBytes!.isNotEmpty)
+            if (hasContent)
               isVideo
-                  ? _buildVideoCard()
+                  ? _buildVideoCard(persistentThumb: persistentThumb)
                   : _buildImageCard()
             else
               Container(
@@ -758,7 +766,7 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
     }
 
     // 2. Video Play Overlay (only when not loading/uploading)
-    if (isVideo && _mediaBytes != null && widget.message.status != MessageStatus.pending) {
+    if (isVideo && widget.message.status != MessageStatus.pending) {
       return Container(
         width: 40,
         height: 40,
@@ -781,10 +789,11 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
     return const SizedBox.shrink();
   }
 
-  Widget _buildVideoCard() {
+  Widget _buildVideoCard({Uint8List? persistentThumb}) {
     return _InlineVideoThumbnail(
-      videoBytes: _mediaBytes!,
+      videoBytes: _mediaBytes ?? Uint8List(0),
       messageId: widget.message.id,
+      initialThumbnailBytes: persistentThumb,
     );
   }
 
@@ -909,10 +918,12 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
 class _InlineVideoThumbnail extends StatefulWidget {
   final Uint8List videoBytes;
   final String? messageId;
+  final Uint8List? initialThumbnailBytes;
 
   const _InlineVideoThumbnail({
     required this.videoBytes,
     this.messageId,
+    this.initialThumbnailBytes,
   });
 
   @override
@@ -920,7 +931,9 @@ class _InlineVideoThumbnail extends StatefulWidget {
 }
 
 class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
+  final GlobalKey _repaintKey = GlobalKey();
   VideoThumbnailInfo? _info;
+  bool _hasCapturedThumb = false;
 
   @override
   void initState() {
@@ -931,20 +944,25 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
   @override
   void didUpdateWidget(covariant _InlineVideoThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.videoBytes != widget.videoBytes) {
+    if (oldWidget.videoBytes != widget.videoBytes || oldWidget.messageId != widget.messageId) {
       _loadThumbnail();
     }
   }
 
   void _loadThumbnail() {
-    // 1. Instant RAM Cache hit (0ms - zero delay)
-    final cached = VideoThumbnailManager.getCachedInfo(widget.videoBytes);
+    // 1. Instant RAM/ROM Cache hit (0ms - zero delay)
+    final cached = VideoThumbnailManager.getCachedInfo(widget.videoBytes, messageId: widget.messageId);
     if (cached != null) {
       _info = cached;
+      if (cached.thumbnailBytes != null && cached.thumbnailBytes!.isNotEmpty) {
+        return;
+      }
       if (cached.isReady && cached.controller != null && cached.controller!.value.isInitialized) {
         return;
       }
     }
+
+    if (widget.videoBytes.isEmpty) return;
 
     // 2. Fast background load & pool registration
     VideoThumbnailManager.loadThumbnail(
@@ -952,10 +970,11 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
       messageId: widget.messageId,
       onUpdate: () {
         if (mounted) {
-          final updated = VideoThumbnailManager.getCachedInfo(widget.videoBytes);
+          final updated = VideoThumbnailManager.getCachedInfo(widget.videoBytes, messageId: widget.messageId);
           setState(() {
             _info = updated;
           });
+          _captureThumbnailIfNeeded();
         }
       },
     ).then((info) {
@@ -963,16 +982,76 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
         setState(() {
           _info = info;
         });
+        _captureThumbnailIfNeeded();
       }
+    });
+  }
+
+  void _captureThumbnailIfNeeded() {
+    if (_hasCapturedThumb) return;
+    final info = _info ?? VideoThumbnailManager.getCachedInfo(widget.videoBytes, messageId: widget.messageId);
+    if (info?.thumbnailBytes != null && info!.thumbnailBytes!.isNotEmpty) return;
+    if (info == null || info.controller == null || !info.controller!.value.isInitialized) return;
+
+    _hasCapturedThumb = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        final boundary = _repaintKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+        if (boundary != null) {
+          final image = await boundary.toImage(pixelRatio: 0.6);
+          final byteData = await image.toByteData(format: ImageByteFormat.png);
+          if (byteData != null) {
+            final pngBytes = byteData.buffer.asUint8List();
+            await VideoThumbnailManager.saveThumbnailToDisk(
+              widget.videoBytes,
+              pngBytes,
+              messageId: widget.messageId,
+            );
+            if (mounted) {
+              setState(() {
+                _info = _info?.copyWith(thumbnailBytes: pngBytes, isReady: true);
+              });
+            }
+          }
+        }
+      } catch (_) {}
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final info = _info ?? VideoThumbnailManager.getCachedInfo(widget.videoBytes);
+    final info = _info ?? VideoThumbnailManager.getCachedInfo(widget.videoBytes, messageId: widget.messageId);
+    final thumbBytes = info?.thumbnailBytes ?? widget.initialThumbnailBytes;
+    final hasThumbnail = thumbBytes != null && thumbBytes.isNotEmpty;
     final isReady = info != null && info.controller != null && info.controller!.value.isInitialized;
     final aspect = info?.aspectRatio ?? (16.0 / 9.0);
     final durationStr = info?.durationString ?? '';
+
+    // If static thumbnail is already saved on ROM -> Instant 0ms display with zero flicker!
+    if (hasThumbnail) {
+      return ClipRRect(
+        child: AspectRatio(
+          aspectRatio: aspect,
+          child: Stack(
+            alignment: Alignment.center,
+            fit: StackFit.expand,
+            children: [
+              Image.memory(
+                thumbBytes,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+              ),
+              // Dark dim overlay matching original styling
+              Container(color: Colors.black.withAlpha(45)),
+              // Top Video Duration badge
+              if (durationStr.isNotEmpty)
+                _buildDurationBadge(durationStr),
+            ],
+          ),
+        ),
+      );
+    }
 
     if (isReady) {
       final controller = info.controller!;
@@ -987,13 +1066,16 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
             alignment: Alignment.center,
             fit: StackFit.expand,
             children: [
-              FittedBox(
-                fit: BoxFit.cover,
-                clipBehavior: Clip.hardEdge,
-                child: SizedBox(
-                  width: videoWidth,
-                  height: videoHeight,
-                  child: VideoPlayer(controller),
+              RepaintBoundary(
+                key: _repaintKey,
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  clipBehavior: Clip.hardEdge,
+                  child: SizedBox(
+                    width: videoWidth,
+                    height: videoHeight,
+                    child: VideoPlayer(controller),
+                  ),
                 ),
               ),
 
@@ -1002,32 +1084,7 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
 
               // Top Video Duration badge
               if (durationStr.isNotEmpty)
-                Positioned(
-                  top: 6,
-                  left: 6,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withAlpha(150),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.videocam_rounded, color: Colors.white, size: 12),
-                        const SizedBox(width: 4),
-                        Text(
-                          durationStr,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                _buildDurationBadge(durationStr),
             ],
           ),
         ),
@@ -1058,37 +1115,116 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
                 child: Icon(Icons.videocam_rounded, color: Colors.white24, size: 36),
               ),
               if (durationStr.isNotEmpty)
-                Positioned(
-                  top: 6,
-                  left: 6,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withAlpha(150),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.videocam_rounded, color: Colors.white, size: 12),
-                        const SizedBox(width: 4),
-                        Text(
-                          durationStr,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                _buildDurationBadge(durationStr),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildDurationBadge(String durationStr) {
+    return Positioned(
+      top: 6,
+      left: 6,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.black.withAlpha(150),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.videocam_rounded, color: Colors.white, size: 12),
+            const SizedBox(width: 4),
+            Text(
+              durationStr,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ImageDimensionResolver {
+  static final Map<int, double> _aspectCache = {};
+
+  static double? getCachedAspect(Uint8List bytes) {
+    final key = bytes.hashCode;
+    if (_aspectCache.containsKey(key)) {
+      return _aspectCache[key];
+    }
+    final aspect = _parseDimensions(bytes);
+    if (aspect != null) {
+      final clamped = aspect.clamp(9.0 / 16.0, 16.0 / 9.0);
+      _aspectCache[key] = clamped;
+      return clamped;
+    }
+    return null;
+  }
+
+  static double? _parseDimensions(Uint8List bytes) {
+    if (bytes.length < 24) return null;
+
+    // PNG format
+    if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+      final w = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+      final h = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+      if (w > 0 && h > 0) return w / h;
+    }
+
+    // JPEG format
+    if (bytes[0] == 0xFF && bytes[1] == 0xD8) {
+      int offset = 2;
+      while (offset + 9 < bytes.length) {
+        if (bytes[offset] != 0xFF) {
+          offset++;
+          continue;
+        }
+        final marker = bytes[offset + 1];
+        // SOF0 (0xC0), SOF1 (0xC1), SOF2 (0xC2)
+        if (marker == 0xC0 || marker == 0xC1 || marker == 0xC2) {
+          final h = (bytes[offset + 5] << 8) | bytes[offset + 6];
+          final w = (bytes[offset + 7] << 8) | bytes[offset + 8];
+          if (w > 0 && h > 0) return w / h;
+        }
+        if (marker == 0xD9 || marker == 0xDA) break;
+        final length = (bytes[offset + 2] << 8) | bytes[offset + 3];
+        offset += 2 + length;
+      }
+    }
+
+    // GIF format
+    if (bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46) {
+      final w = bytes[6] | (bytes[7] << 8);
+      final h = bytes[8] | (bytes[9] << 8);
+      if (w > 0 && h > 0) return w / h;
+    }
+
+    // WebP format
+    if (bytes.length > 30 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46) {
+      // VP8
+      if (bytes[12] == 0x56 && bytes[13] == 0x50 && bytes[14] == 0x38 && bytes[15] == 0x20) {
+        final w = (bytes[26] | (bytes[27] << 8)) & 0x3FFF;
+        final h = (bytes[28] | (bytes[29] << 8)) & 0x3FFF;
+        if (w > 0 && h > 0) return w / h;
+      }
+      // VP8X
+      if (bytes[12] == 0x56 && bytes[13] == 0x50 && bytes[14] == 0x38 && bytes[15] == 0x58) {
+        final w = 1 + (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16));
+        final h = 1 + (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16));
+        if (w > 0 && h > 0) return w / h;
+      }
+    }
+
+    return null;
   }
 }
 
@@ -1104,13 +1240,12 @@ class _InlineImageThumbnail extends StatefulWidget {
 }
 
 class _InlineImageThumbnailState extends State<_InlineImageThumbnail> {
-  static final Map<int, double> _aspectCache = {};
   double? _aspectRatio;
 
   @override
   void initState() {
     super.initState();
-    _aspectRatio = _aspectCache[widget.imageBytes.hashCode];
+    _aspectRatio = ImageDimensionResolver.getCachedAspect(widget.imageBytes);
     if (_aspectRatio == null) {
       _resolveAspect();
     }
@@ -1120,7 +1255,7 @@ class _InlineImageThumbnailState extends State<_InlineImageThumbnail> {
   void didUpdateWidget(covariant _InlineImageThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.imageBytes != widget.imageBytes) {
-      _aspectRatio = _aspectCache[widget.imageBytes.hashCode];
+      _aspectRatio = ImageDimensionResolver.getCachedAspect(widget.imageBytes);
       if (_aspectRatio == null) {
         _resolveAspect();
       }
@@ -1137,9 +1272,8 @@ class _InlineImageThumbnailState extends State<_InlineImageThumbnail> {
             final h = info.image.height.toDouble();
             if (w > 0 && h > 0) {
               final rawAspect = w / h;
-              // Max vertical ratio 9:16 (0.5625), max horizontal ratio 16:9 (1.777)
               final clamped = rawAspect.clamp(9.0 / 16.0, 16.0 / 9.0);
-              _aspectCache[widget.imageBytes.hashCode] = clamped;
+              ImageDimensionResolver._aspectCache[widget.imageBytes.hashCode] = clamped;
               setState(() {
                 _aspectRatio = clamped;
               });

@@ -54,11 +54,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
   StreamSubscription? _readReceiptSub;
   StreamSubscription? _historyToggleSub;
   Timer? _presenceTimer;
+  double _lastBottomInset = 0.0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _lastBottomInset = WidgetsBinding.instance.platformDispatcher.views.firstOrNull?.viewInsets.bottom ?? 0.0;
     _currentContact = widget.contact;
     if (widget.initialMessages != null && widget.initialMessages!.isNotEmpty) {
       _messages.addAll(widget.initialMessages!);
@@ -161,11 +163,16 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _scrollToBottom(animate: false);
-      }
-    });
+    final bottomInset = WidgetsBinding.instance.platformDispatcher.views.firstOrNull?.viewInsets.bottom ?? 0.0;
+    final keyboardOpened = bottomInset > _lastBottomInset && bottomInset > 0;
+    _lastBottomInset = bottomInset;
+    if (keyboardOpened) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _scrollToBottom(animate: false);
+        }
+      });
+    }
   }
 
   ChatRepository? _chatRepo;
@@ -687,20 +694,81 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
 
   Future<void> _handleOpenMedia(MessageModel msg, Uint8List rawBytes) async {
     final connManager = context.read<ConnectionManager>();
-    final payload = EphemeralMediaPayload.tryParse(msg.decryptedContent ?? '');
-    final isMe = msg.senderId.trim().toUpperCase() == connManager.myIdentity.deviceId.trim().toUpperCase();
 
-    await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => EphemeralMediaViewerScreen(
+    // 1. Gather all media messages from this conversation
+    final mediaMessages = _messages.where((m) {
+      if (m.messageType == MessageType.image || m.messageType == MessageType.video) {
+        return true;
+      }
+      final p = EphemeralMediaPayload.tryParse(m.decryptedContent ?? '');
+      return p != null;
+    }).toList();
+
+    // 2. Map messages to EphemeralMediaItem list
+    final items = mediaMessages.map((m) {
+      final payload = EphemeralMediaPayload.tryParse(m.decryptedContent ?? '');
+      final isItemMe = m.senderId.trim().toUpperCase() == connManager.myIdentity.deviceId.trim().toUpperCase();
+      final senderName = isItemMe ? 'You' : _currentContact.nickname;
+      final mediaType = payload?.mediaType ?? (m.messageType == MessageType.video ? 'video' : 'photo');
+
+      Uint8List? initialBytes;
+      if (m.id == msg.id) {
+        initialBytes = rawBytes;
+      } else {
+        final cacheKey = payload?.mediaKeyBase64.isNotEmpty == true
+            ? payload!.mediaKeyBase64
+            : m.id;
+        initialBytes = connManager.ephemeralMediaService.getCachedMedia(cacheKey) ??
+            connManager.ephemeralMediaService.getCachedMedia(m.id) ??
+            (payload?.url.isNotEmpty == true ? connManager.ephemeralMediaService.getCachedMedia(payload!.url) : null);
+      }
+
+      return EphemeralMediaItem(
+        message: m,
+        payload: payload,
+        rawBytes: initialBytes,
+        mediaType: mediaType,
+        senderName: senderName,
+        caption: payload?.caption,
+      );
+    }).toList();
+
+    int initialIndex = mediaMessages.indexWhere((m) => m.id == msg.id);
+    if (initialIndex == -1) {
+      final payload = EphemeralMediaPayload.tryParse(msg.decryptedContent ?? '');
+      final isMe = msg.senderId.trim().toUpperCase() == connManager.myIdentity.deviceId.trim().toUpperCase();
+      items.add(
+        EphemeralMediaItem(
+          message: msg,
+          payload: payload,
           rawBytes: rawBytes,
           mediaType: payload?.mediaType ?? (msg.messageType == MessageType.video ? 'video' : 'photo'),
           senderName: isMe ? 'You' : _currentContact.nickname,
           caption: payload?.caption,
         ),
+      );
+      initialIndex = items.length - 1;
+    }
+
+    final savedOffset = _scrollController.hasClients ? _scrollController.offset : null;
+
+    await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EphemeralMediaViewerScreen(
+          items: items,
+          initialIndex: initialIndex,
+        ),
       ),
     );
+
+    if (savedOffset != null && _scrollController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients && mounted) {
+          _scrollController.jumpTo(savedOffset);
+        }
+      });
+    }
   }
 
   Future<void> _deleteMessage(MessageModel msg) async {

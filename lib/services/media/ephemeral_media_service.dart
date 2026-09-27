@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
+import 'video_thumbnail_manager.dart';
 
 class EphemeralMediaPayload {
   final String mediaType; // 'photo' | 'video'
@@ -197,9 +198,10 @@ class EphemeralMediaService {
     } catch (_) {}
   }
 
-  /// Deletes all media associated with a message (checks message ID, mediaKey, URL)
+  /// Deletes all media associated with a message (checks message ID, mediaKey, URL, and video cache)
   Future<void> deleteMessageMedia(String messageId, {String? decryptedContent}) async {
     await deleteMedia(messageId);
+    await VideoThumbnailManager.deleteVideo(messageId: messageId);
     if (decryptedContent != null && decryptedContent.isNotEmpty) {
       final payload = EphemeralMediaPayload.tryParse(decryptedContent);
       if (payload != null) {

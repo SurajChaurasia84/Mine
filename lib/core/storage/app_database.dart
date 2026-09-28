@@ -57,7 +57,12 @@ class AppDatabase {
     );
   }
 
+  static bool _hasRunMigration = false;
+
   static Future<void> _migrateTables(DatabaseExecutor db) async {
+    if (_hasRunMigration) return;
+    _hasRunMigration = true;
+
     try {
       await db.execute('ALTER TABLE messages ADD COLUMN view_count INTEGER DEFAULT 0');
     } catch (_) {}

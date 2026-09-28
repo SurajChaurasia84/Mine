@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'app/app.dart';
+import 'services/media/media_picker_helper.dart';
 import 'core/crypto/crypto_service.dart';
 import 'core/crypto/key_pair_bundle.dart';
 import 'core/storage/app_database.dart';
@@ -14,6 +15,7 @@ import 'data/repositories/contact_repository.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaPickerHelper.ensureConfigured();
 
   // Ensure full system UI overlays (status bar and navigation bar) are enabled across the app
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: SystemUiOverlay.values);

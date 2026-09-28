@@ -6,6 +6,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'app/app.dart';
 import 'core/crypto/crypto_service.dart';
+import 'core/crypto/key_pair_bundle.dart';
 import 'core/storage/app_database.dart';
 import 'core/storage/secure_key_store.dart';
 import 'data/repositories/chat_repository.dart';
@@ -40,9 +41,13 @@ void main() async {
   final contactRepository = ContactRepository(appDatabase: appDatabase);
   final chatRepository = ChatRepository(appDatabase: appDatabase);
 
-  // Pre-fetch identity & displayName for instant launch and glitch-free avatar rendering
-  final initialIdentity = await secureKeyStore.getIdentity();
-  final initialDisplayName = await secureKeyStore.getDisplayName();
+  // Pre-fetch identity & displayName concurrently for fastest cold start
+  final results = await Future.wait([
+    secureKeyStore.getIdentity(),
+    secureKeyStore.getDisplayName(),
+  ]);
+  final initialIdentity = results[0] as KeyPairBundle?;
+  final initialDisplayName = results[1] as String?;
 
   runApp(
     MineApp(

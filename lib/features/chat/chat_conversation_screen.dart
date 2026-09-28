@@ -316,82 +316,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     _scrollToBottom(animate: true);
   }
 
-  Future<void> _handleAttachMedia() async {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: MineTheme.surfaceDark,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildMediaOption(
-                      icon: Icons.photo_library_rounded,
-                      label: 'Gallery\nPhoto',
-                      color: const Color(0xFF38BDF8),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _pickAndSendMedia(ImageSource.gallery, isVideo: false);
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildMediaOption(
-                      icon: Icons.video_library_rounded,
-                      label: 'Gallery\nVideo',
-                      color: const Color(0xFF4ADE80),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _pickAndSendMedia(ImageSource.gallery, isVideo: true);
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildMediaOption(
-                      icon: Icons.camera_alt_rounded,
-                      label: 'Camera\nPhoto',
-                      color: const Color(0xFFFF2D55),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _pickAndSendMedia(ImageSource.camera, isVideo: false);
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    child: _buildMediaOption(
-                      icon: Icons.videocam_rounded,
-                      label: 'Camera\nVideo',
-                      color: const Color(0xFFA855F7),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        _pickAndSendMedia(ImageSource.camera, isVideo: true);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-            ],
-          ),
-        ),
-      ),
-    );
+  Future<void> _handleGalleryTap() async {
+    await _pickAndSendMedia(ImageSource.gallery, isVideo: false);
   }
 
   Future<void> _handleCameraTap() async {
@@ -405,6 +331,24 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     if (result == null) return;
     if (!mounted) return;
 
+    final initialCameraItems = <MediaPreviewItem>[
+      MediaPreviewItem(
+        id: 'item_0',
+        rawBytes: result.rawBytes,
+        mediaType: result.mediaType,
+      ),
+    ];
+    if (result.additionalMedia != null) {
+      for (int i = 0; i < result.additionalMedia!.length; i++) {
+        final add = result.additionalMedia![i];
+        initialCameraItems.add(MediaPreviewItem(
+          id: 'item_${DateTime.now().millisecondsSinceEpoch}_${i + 1}',
+          rawBytes: add.rawBytes,
+          mediaType: add.mediaType,
+        ));
+      }
+    }
+
     // WhatsApp-style Media Preview with caption before sending
     final previewResult = await Navigator.push<MediaSendResult>(
       context,
@@ -413,6 +357,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
           rawBytes: result.rawBytes,
           mediaType: result.mediaType,
           recipientName: _currentContact.nickname,
+          initialItems: initialCameraItems,
         ),
       ),
     );
@@ -420,10 +365,19 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     if (previewResult == null || !previewResult.shouldSend) return;
     if (!mounted) return;
 
-    final isVideo = result.mediaType == 'video';
-    final connManager = context.read<ConnectionManager>();
-    final tempMessageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${connManager.myIdentity.deviceId.hashCode.abs()}';
+    final itemsToSend = (previewResult.items != null && previewResult.items!.isNotEmpty)
+        ? previewResult.items!
+        : [
+            MediaPreviewItem(
+              id: 'item_0',
+              rawBytes: result.rawBytes,
+              editedBytes: previewResult.editedBytes,
+              mediaType: result.mediaType,
+              caption: previewResult.caption,
+            ),
+          ];
 
+    final connManager = context.read<ConnectionManager>();
     final replyTo = _replyingTo;
     final replySenderName = replyTo != null
         ? (replyTo.senderId.trim().toUpperCase() ==
@@ -455,142 +409,100 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
       }
     }
 
-    final pendingMsg = MessageModel(
-      id: tempMessageId,
-      conversationId: widget.conversation.id,
-      senderId: connManager.myIdentity.deviceId,
-      ciphertext: '',
-      timestamp: DateTime.now(),
-      status: MessageStatus.pending,
-      messageType: isVideo ? MessageType.video : MessageType.image,
-      viewCount: 0,
-      isExpired: false,
-      decryptedContent: jsonEncode({
-        'type': 'ephemeral_media',
-        'mediaType': isVideo ? 'video' : 'photo',
-        'caption': previewResult.caption,
-      }),
-      replyToMessageId: replyTo?.id,
-      replySenderName: replySenderName,
-      replyText: rText,
-      replyMediaType: rMediaType,
-    );
+    for (int i = 0; i < itemsToSend.length; i++) {
+      final item = itemsToSend[i];
+      final isVideo = item.isVideo;
+      final finalBytes = item.displayBytes;
+      final itemCaption = item.caption.trim().isNotEmpty
+          ? item.caption.trim()
+          : (i == 0 && previewResult.caption.isNotEmpty ? previewResult.caption : null);
 
-    if (mounted) {
-      setState(() {
-        _messages.add(pendingMsg);
-      });
-      _scrollToBottom(animate: true);
-    }
+      final tempMessageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${i}_${connManager.myIdentity.deviceId.hashCode.abs()}';
 
-    try {
-      final finalBytes = previewResult.editedBytes ?? result.rawBytes;
-      connManager.ephemeralMediaService.cacheMedia(tempMessageId, finalBytes);
-
-      final sentMsg = await connManager.sendEphemeralMedia(
-        contact: _currentContact,
-        conversation: widget.conversation,
-        rawBytes: finalBytes,
-        mediaType: isVideo ? 'video' : 'photo',
-        caption: previewResult.caption.isNotEmpty ? previewResult.caption : null,
-        saveHistory: _saveHistory,
-        replyTo: replyTo,
-        replySenderName: replySenderName,
+      final pendingMsg = MessageModel(
+        id: tempMessageId,
+        conversationId: widget.conversation.id,
+        senderId: connManager.myIdentity.deviceId,
+        ciphertext: '',
+        timestamp: DateTime.now(),
+        status: MessageStatus.pending,
+        messageType: isVideo ? MessageType.video : MessageType.image,
+        viewCount: 0,
+        isExpired: false,
+        decryptedContent: jsonEncode({
+          'type': 'ephemeral_media',
+          'mediaType': isVideo ? 'video' : 'photo',
+          'caption': itemCaption,
+        }),
+        replyToMessageId: (i == 0) ? replyTo?.id : null,
+        replySenderName: (i == 0) ? replySenderName : null,
+        replyText: (i == 0) ? rText : null,
+        replyMediaType: (i == 0) ? rMediaType : null,
       );
 
-      connManager.ephemeralMediaService.cacheMedia(sentMsg.id, finalBytes);
+      connManager.ephemeralMediaService.cacheMedia(tempMessageId, finalBytes);
 
       if (mounted) {
         setState(() {
-          final idx = _messages.indexWhere((m) => m.id == tempMessageId || m.id == sentMsg.id);
-          if (idx != -1) {
-            _messages[idx] = sentMsg;
-          } else {
-            _messages.add(sentMsg);
-          }
+          _messages.add(pendingMsg);
         });
         _scrollToBottom(animate: true);
       }
-    } catch (_) {}
-  }
 
-  Widget _buildMediaOption({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: color.withAlpha(35),
-                shape: BoxShape.circle,
-                border: Border.all(color: color.withAlpha(100), width: 1.5),
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              style: const TextStyle(
-                color: MineTheme.textLight,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w500,
-                height: 1.2,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+      try {
+        final sentMsg = await connManager.sendEphemeralMedia(
+          contact: _currentContact,
+          conversation: widget.conversation,
+          rawBytes: finalBytes,
+          mediaType: isVideo ? 'video' : 'photo',
+          caption: itemCaption,
+          saveHistory: _saveHistory,
+          replyTo: (i == 0) ? replyTo : null,
+          replySenderName: (i == 0) ? replySenderName : null,
+        );
+
+        connManager.ephemeralMediaService.cacheMedia(sentMsg.id, finalBytes);
+
+        if (mounted) {
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == tempMessageId || m.id == sentMsg.id);
+            if (idx != -1) {
+              _messages[idx] = sentMsg;
+            } else {
+              _messages.add(sentMsg);
+            }
+          });
+          _scrollToBottom(animate: true);
+        }
+      } catch (_) {}
+    }
   }
 
   Future<void> _pickAndSendMedia(ImageSource source, {required bool isVideo}) async {
     try {
-      final picker = ImagePicker();
-      final XFile? file;
-      if (isVideo) {
-        file = await picker.pickVideo(source: source);
+      final List<MediaPreviewItem> initialItems = [];
+
+      if (source == ImageSource.gallery) {
+        initialItems.addAll(await MediaPickerHelper.pickMultipleMedia());
+        if (initialItems.isEmpty) return;
       } else {
-        file = await picker.pickImage(
-          source: source,
-          imageQuality: 80,
-          maxWidth: 1920,
-          maxHeight: 1920,
-        );
+        final item = await MediaPickerHelper.pickSingle(source: source, isVideo: isVideo);
+        if (item == null) return;
+        initialItems.add(item);
       }
 
-      if (file == null) return;
-      final rawBytes = await file.readAsBytes();
-
-      final actualIsVideo = isVideo ||
-          file.path.toLowerCase().endsWith('.mp4') ||
-          file.path.toLowerCase().endsWith('.mov') ||
-          file.path.toLowerCase().endsWith('.mkv') ||
-          file.path.toLowerCase().endsWith('.webm') ||
-          file.path.toLowerCase().endsWith('.avi');
-
+      if (initialItems.isEmpty) return;
       if (!mounted) return;
 
-      // WhatsApp-style Media Preview with caption before sending
+      // WhatsApp-style Media Preview (supports single or multiple media)
       final previewResult = await Navigator.push<MediaSendResult>(
         context,
         MaterialPageRoute(
           builder: (_) => MediaSendPreviewScreen(
-            rawBytes: rawBytes,
-            mediaType: actualIsVideo ? 'video' : 'photo',
+            rawBytes: initialItems.first.rawBytes,
+            mediaType: initialItems.first.mediaType,
             recipientName: _currentContact.nickname,
+            initialItems: initialItems,
           ),
         ),
       );
@@ -598,9 +510,11 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
       if (previewResult == null || !previewResult.shouldSend) return;
       if (!mounted) return;
 
-      final connManager = context.read<ConnectionManager>();
-      final tempMessageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${connManager.myIdentity.deviceId.hashCode.abs()}';
+      final itemsToSend = (previewResult.items != null && previewResult.items!.isNotEmpty)
+          ? previewResult.items!
+          : initialItems;
 
+      final connManager = context.read<ConnectionManager>();
       final replyTo = _replyingTo;
       final replySenderName = replyTo != null
           ? (replyTo.senderId.trim().toUpperCase() ==
@@ -632,63 +546,76 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         }
       }
 
-      final pendingMsg = MessageModel(
-        id: tempMessageId,
-        conversationId: widget.conversation.id,
-        senderId: connManager.myIdentity.deviceId,
-        ciphertext: '',
-        timestamp: DateTime.now(),
-        status: MessageStatus.pending,
-        messageType: actualIsVideo ? MessageType.video : MessageType.image,
-        viewCount: 0,
-        isExpired: false,
-        decryptedContent: jsonEncode({
-          'type': 'ephemeral_media',
-          'mediaType': actualIsVideo ? 'video' : 'photo',
-          'caption': previewResult.caption,
-        }),
-        replyToMessageId: replyTo?.id,
-        replySenderName: replySenderName,
-        replyText: rText,
-        replyMediaType: rMediaType,
-      );
+      // Sequentially send each media item
+      for (int i = 0; i < itemsToSend.length; i++) {
+        final item = itemsToSend[i];
+        final actualIsVideo = item.isVideo;
+        final finalBytes = item.displayBytes;
+        final itemCaption = item.caption.trim().isNotEmpty
+            ? item.caption.trim()
+            : (i == 0 && previewResult.caption.isNotEmpty ? previewResult.caption : null);
 
-      final finalBytes = previewResult.editedBytes ?? rawBytes;
-      connManager.ephemeralMediaService.cacheMedia(tempMessageId, finalBytes);
+        final tempMessageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${i}_${connManager.myIdentity.deviceId.hashCode.abs()}';
 
-      if (mounted) {
-        setState(() {
-          _messages.add(pendingMsg);
-        });
-        _scrollToBottom(animate: true);
-      }
+        final pendingMsg = MessageModel(
+          id: tempMessageId,
+          conversationId: widget.conversation.id,
+          senderId: connManager.myIdentity.deviceId,
+          ciphertext: '',
+          timestamp: DateTime.now(),
+          status: MessageStatus.pending,
+          messageType: actualIsVideo ? MessageType.video : MessageType.image,
+          viewCount: 0,
+          isExpired: false,
+          decryptedContent: jsonEncode({
+            'type': 'ephemeral_media',
+            'mediaType': actualIsVideo ? 'video' : 'photo',
+            'caption': itemCaption,
+          }),
+          replyToMessageId: (i == 0) ? replyTo?.id : null,
+          replySenderName: (i == 0) ? replySenderName : null,
+          replyText: (i == 0) ? rText : null,
+          replyMediaType: (i == 0) ? rMediaType : null,
+        );
 
-      final sentMsg = await connManager.sendEphemeralMedia(
-        contact: _currentContact,
-        conversation: widget.conversation,
-        rawBytes: finalBytes,
-        mediaType: actualIsVideo ? 'video' : 'photo',
-        caption: previewResult.caption.isNotEmpty ? previewResult.caption : null,
-        saveHistory: _saveHistory,
-        replyTo: replyTo,
-        replySenderName: replySenderName,
-      );
+        connManager.ephemeralMediaService.cacheMedia(tempMessageId, finalBytes);
 
-      connManager.ephemeralMediaService.cacheMedia(sentMsg.id, finalBytes);
+        if (mounted) {
+          setState(() {
+            _messages.add(pendingMsg);
+          });
+          _scrollToBottom(animate: true);
+        }
 
-      if (mounted) {
-        setState(() {
-          final idx = _messages.indexWhere((m) => m.id == tempMessageId || m.id == sentMsg.id);
-          if (idx != -1) {
-            _messages[idx] = sentMsg;
-          } else {
-            _messages.add(sentMsg);
+        try {
+          final sentMsg = await connManager.sendEphemeralMedia(
+            contact: _currentContact,
+            conversation: widget.conversation,
+            rawBytes: finalBytes,
+            mediaType: actualIsVideo ? 'video' : 'photo',
+            caption: itemCaption,
+            saveHistory: _saveHistory,
+            replyTo: (i == 0) ? replyTo : null,
+            replySenderName: (i == 0) ? replySenderName : null,
+          );
+
+          connManager.ephemeralMediaService.cacheMedia(sentMsg.id, finalBytes);
+
+          if (mounted) {
+            setState(() {
+              final idx = _messages.indexWhere((m) => m.id == tempMessageId || m.id == sentMsg.id);
+              if (idx != -1) {
+                _messages[idx] = sentMsg;
+              } else {
+                _messages.add(sentMsg);
+              }
+            });
+            _scrollToBottom(animate: true);
           }
-        });
-        _scrollToBottom(animate: true);
+        } catch (_) {}
       }
     } catch (e) {
-      // On error, the pending message will show failed status without popup snackbars
+      debugPrint('Error picking and sending media: $e');
     }
   }
 
@@ -1076,7 +1003,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
               ChatInputBar(
                 key: _inputKey,
                 onSend: _handleSendMessage,
-                onAttach: _handleAttachMedia,
+                onGallery: _handleGalleryTap,
                 onCamera: _handleCameraTap,
                 onTap: () => _scrollToBottom(animate: true),
                 replyMessage: _replyingTo,

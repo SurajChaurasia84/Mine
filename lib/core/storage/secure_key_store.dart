@@ -105,6 +105,7 @@ class SecureKeyStore {
     if (_cachedIdentity != null) return _cachedIdentity;
 
     String? jsonStr;
+    bool recoveredFromBackup = false;
 
     // 1. Try secure hardware storage
     try {
@@ -115,6 +116,7 @@ class SecureKeyStore {
 
     // 2. Try persistent SQLite backup if secure storage was empty or failed
     if (jsonStr == null || jsonStr.isEmpty) {
+      recoveredFromBackup = true;
       try {
         jsonStr = await appDatabase?.getLocalIdentity();
       } catch (e) {
@@ -124,6 +126,7 @@ class SecureKeyStore {
 
     // 3. Try RAM session cache
     if (jsonStr == null || jsonStr.isEmpty) {
+      recoveredFromBackup = true;
       jsonStr = _webSessionCache[_identityKey];
     }
 
@@ -134,9 +137,11 @@ class SecureKeyStore {
       final identity = KeyPairBundle.fromSecureJson(map);
       _cachedIdentity = identity;
 
-      // Sync back to both stores to ensure persistent retention
+      // Sync back only if recovered from backup to eliminate startup disk writes
       _webSessionCache[_identityKey] = jsonStr;
-      _repairBackups(jsonStr);
+      if (recoveredFromBackup) {
+        _repairBackups(jsonStr);
+      }
 
       return _cachedIdentity;
     } catch (e) {

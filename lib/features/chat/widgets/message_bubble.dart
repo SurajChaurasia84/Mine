@@ -243,7 +243,7 @@ class MessageBubble extends StatelessWidget {
     final is24 = DateFormatter.is24HourFormat(context);
     final timeSpacerWidth = isMe ? (is24 ? 58.0 : 70.0) : (is24 ? 42.0 : 50.0);
 
-    final bubbleWidth = (MediaQuery.of(context).size.width * 0.74).clamp(240.0, 285.0);
+    final bubbleWidth = (MediaQuery.of(context).size.width * 0.70).clamp(235.0, 260.0);
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -254,7 +254,10 @@ class MessageBubble extends StatelessWidget {
           }
         },
         child: Container(
-          width: bubbleWidth,
+          constraints: BoxConstraints(
+            maxWidth: bubbleWidth + 7.0,
+            minWidth: 165.0 + 7.0,
+          ),
           margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
           decoration: BoxDecoration(
             color: bubbleColor,
@@ -267,63 +270,69 @@ class MessageBubble extends StatelessWidget {
               ),
             ],
           ),
-          child: ClipRRect(
-            borderRadius: borderRadius,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (message.replyText != null || message.replySenderName != null)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
-                    child: _buildQuotedReplyBox(context),
-                  ),
+          child: IntrinsicWidth(
+            child: ClipRRect(
+              borderRadius: borderRadius,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (message.replyText != null || message.replySenderName != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+                      child: _buildQuotedReplyBox(context),
+                    ),
 
-                // Inline Image / Video Thumbnail with Original Ratio & Full Width
-                _InlineMediaContent(
-                  message: message,
-                  payload: payload,
-                  isMe: isMe,
-                  hasCaption: hasCaption,
-                  onOpenMedia: onOpenMedia,
-                ),
-
-                // Caption if present
-                if (hasCaption) ...[
+                  // WhatsApp-style thin color border around media
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(9, 6, 9, 6),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: Stack(
-                        children: [
-                          _buildMessageTextWithSpacer(context, caption, timeSpacerWidth),
-                          Positioned(
-                            bottom: 0,
-                            right: 0,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                Text(
-                                  DateFormatter.formatBubbleTime(message.timestamp, context),
-                                  style: const TextStyle(
-                                    color: MineTheme.textMuted,
-                                    fontSize: 10.5,
-                                  ),
-                                ),
-                                if (isMe) ...[
-                                  const SizedBox(width: 3),
-                                  _buildStatusIcon(message.status),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                    padding: EdgeInsets.fromLTRB(3.5, 3.5, 3.5, hasCaption ? 3.0 : 3.5),
+                    child: _InlineMediaContent(
+                      message: message,
+                      payload: payload,
+                      isMe: isMe,
+                      hasCaption: hasCaption,
+                      maxBubbleWidth: bubbleWidth,
+                      onOpenMedia: onOpenMedia,
                     ),
                   ),
+
+                  // Caption if present
+                  if (hasCaption) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 5),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Stack(
+                          children: [
+                            _buildMessageTextWithSpacer(context, caption, timeSpacerWidth),
+                            Positioned(
+                              bottom: 0,
+                              right: 0,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    DateFormatter.formatBubbleTime(message.timestamp, context),
+                                    style: const TextStyle(
+                                      color: MineTheme.textMuted,
+                                      fontSize: 10.5,
+                                    ),
+                                  ),
+                                  if (isMe) ...[
+                                    const SizedBox(width: 3),
+                                    _buildStatusIcon(message.status),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -522,6 +531,7 @@ class _InlineMediaContent extends StatefulWidget {
   final EphemeralMediaPayload? payload;
   final bool isMe;
   final bool hasCaption;
+  final double maxBubbleWidth;
   final Function(MessageModel message, Uint8List rawBytes)? onOpenMedia;
 
   const _InlineMediaContent({
@@ -529,6 +539,7 @@ class _InlineMediaContent extends StatefulWidget {
     required this.payload,
     required this.isMe,
     required this.hasCaption,
+    required this.maxBubbleWidth,
     this.onOpenMedia,
   });
 
@@ -680,22 +691,23 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
           _loadMedia();
         }
       },
-      child: SizedBox(
-        width: double.infinity,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            if (hasContent)
-              isVideo
-                  ? _buildVideoCard(persistentThumb: persistentThumb)
-                  : _buildImageCard()
-            else
-              Container(
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (hasContent)
+            isVideo
+                ? _buildVideoCard(persistentThumb: persistentThumb)
+                : _buildImageCard()
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
                 height: 160,
-                width: double.infinity,
+                width: widget.maxBubbleWidth,
                 color: const Color(0xFF1B272E),
                 child: _buildPlaceholder(isVideo),
               ),
+            ),
 
             // Center Status Overlay (Uploading progress / Video Play button)
             _buildCenterOverlay(isVideo: isVideo),
@@ -732,9 +744,8 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
               ),
           ],
         ),
-      ),
-    );
-  }
+      );
+    }
 
   Widget _buildCenterOverlay({required bool isVideo}) {
     // 1. Outgoing media upload in progress
@@ -788,16 +799,22 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
   }
 
   Widget _buildVideoCard({Uint8List? persistentThumb}) {
+    final hasReply = widget.message.replyText != null || widget.message.replySenderName != null;
     return _InlineVideoThumbnail(
       videoBytes: _mediaBytes ?? Uint8List(0),
       messageId: widget.message.id,
       initialThumbnailBytes: persistentThumb,
+      maxBubbleWidth: widget.maxBubbleWidth,
+      hasCaption: widget.hasCaption || hasReply,
     );
   }
 
   Widget _buildImageCard() {
+    final hasReply = widget.message.replyText != null || widget.message.replySenderName != null;
     return _InlineImageThumbnail(
       imageBytes: _mediaBytes!,
+      maxBubbleWidth: widget.maxBubbleWidth,
+      hasCaption: widget.hasCaption || hasReply,
     );
   }
 
@@ -917,11 +934,15 @@ class _InlineVideoThumbnail extends StatefulWidget {
   final Uint8List videoBytes;
   final String? messageId;
   final Uint8List? initialThumbnailBytes;
+  final double maxBubbleWidth;
+  final bool hasCaption;
 
   const _InlineVideoThumbnail({
     required this.videoBytes,
     this.messageId,
     this.initialThumbnailBytes,
+    required this.maxBubbleWidth,
+    this.hasCaption = false,
   });
 
   @override
@@ -1023,36 +1044,53 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
     final thumbBytes = info?.thumbnailBytes ?? widget.initialThumbnailBytes;
     final hasThumbnail = thumbBytes != null && thumbBytes.isNotEmpty;
     final isReady = info != null && info.controller != null && info.controller!.value.isInitialized;
-    final rawAspect = info?.aspectRatio ?? (16.0 / 9.0);
-    final aspect = rawAspect.clamp(0.72, 1.78);
+    final rawAspect = info?.aspectRatio ??
+        (thumbBytes != null ? ImageDimensionResolver.getCachedAspect(thumbBytes) : null) ??
+        (16.0 / 9.0);
+    final aspect = rawAspect > 0 ? rawAspect.clamp(9.0 / 16.0, 16.0 / 9.0) : (16.0 / 9.0);
     final durationStr = info?.durationString ?? '';
+
+    final double cardWidth;
+    final double cardHeight;
+    if (widget.hasCaption) {
+      cardWidth = widget.maxBubbleWidth;
+      if (aspect < 1.0) {
+        cardHeight = 315.0;
+      } else {
+        cardHeight = (widget.maxBubbleWidth / aspect).clamp(130.0, 315.0);
+      }
+    } else {
+      if (aspect < 1.0) {
+        cardHeight = 315.0;
+        cardWidth = (315.0 * aspect).clamp(165.0, widget.maxBubbleWidth);
+      } else {
+        cardWidth = widget.maxBubbleWidth;
+        cardHeight = (widget.maxBubbleWidth / aspect).clamp(130.0, 315.0);
+      }
+    }
 
     // If static thumbnail is already saved on ROM -> Instant 0ms display with zero flicker!
     if (hasThumbnail) {
-      return ConstrainedBox(
-        constraints: const BoxConstraints(
-          minHeight: 130,
-          maxHeight: 290,
-        ),
+      return SizedBox(
+        width: cardWidth,
+        height: cardHeight,
         child: ClipRRect(
-          child: AspectRatio(
-            aspectRatio: aspect,
-            child: Stack(
-              alignment: Alignment.center,
-              fit: StackFit.expand,
-              children: [
-                Image.memory(
-                  thumbBytes,
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                ),
-                // Dark dim overlay matching original styling
-                Container(color: Colors.black.withAlpha(45)),
-                // Top Video Duration badge
-                if (durationStr.isNotEmpty)
-                  _buildDurationBadge(durationStr),
-              ],
-            ),
+          borderRadius: BorderRadius.circular(10),
+          child: Stack(
+            alignment: Alignment.center,
+            fit: StackFit.expand,
+            children: [
+              Image.memory(
+                thumbBytes,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+              ),
+              // Dark dim overlay matching original styling
+              Container(color: Colors.black.withAlpha(45)),
+              // Top Video Duration badge
+              if (durationStr.isNotEmpty)
+                _buildDurationBadge(durationStr),
+            ],
           ),
         ),
       );
@@ -1064,76 +1102,68 @@ class _InlineVideoThumbnailState extends State<_InlineVideoThumbnail> {
       final videoWidth = size.width > 0 ? size.width : 160.0;
       final videoHeight = size.height > 0 ? size.height : 90.0;
 
-      return ConstrainedBox(
-        constraints: const BoxConstraints(
-          minHeight: 130,
-          maxHeight: 290,
-        ),
+      return SizedBox(
+        width: cardWidth,
+        height: cardHeight,
         child: ClipRRect(
-          child: AspectRatio(
-            aspectRatio: aspect,
-            child: Stack(
-              alignment: Alignment.center,
-              fit: StackFit.expand,
-              children: [
-                RepaintBoundary(
-                  key: _repaintKey,
-                  child: FittedBox(
-                    fit: BoxFit.cover,
-                    clipBehavior: Clip.hardEdge,
-                    child: SizedBox(
-                      width: videoWidth,
-                      height: videoHeight,
-                      child: VideoPlayer(controller),
-                    ),
+          borderRadius: BorderRadius.circular(10),
+          child: Stack(
+            alignment: Alignment.center,
+            fit: StackFit.expand,
+            children: [
+              RepaintBoundary(
+                key: _repaintKey,
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  clipBehavior: Clip.hardEdge,
+                  child: SizedBox(
+                    width: videoWidth,
+                    height: videoHeight,
+                    child: VideoPlayer(controller),
                   ),
                 ),
+              ),
 
-                // Dark dim overlay for high contrast
-                Container(color: Colors.black.withAlpha(45)),
+              // Dark dim overlay for high contrast
+              Container(color: Colors.black.withAlpha(45)),
 
-                // Top Video Duration badge
-                if (durationStr.isNotEmpty)
-                  _buildDurationBadge(durationStr),
-              ],
-            ),
+              // Top Video Duration badge
+              if (durationStr.isNotEmpty)
+                _buildDurationBadge(durationStr),
+            ],
           ),
         ),
       );
     }
 
     // Modern WhatsApp-style smooth placeholder matching the exact aspect ratio
-    return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minHeight: 130,
-        maxHeight: 290,
-      ),
+    return SizedBox(
+      width: cardWidth,
+      height: cardHeight,
       child: ClipRRect(
-        child: AspectRatio(
-          aspectRatio: aspect,
-          child: Container(
-            decoration: const BoxDecoration(
-              color: Color(0xFF1B272E),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF1E2B34),
-                  Color(0xFF141D22),
-                ],
-              ),
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              fit: StackFit.expand,
-              children: [
-                const Center(
-                  child: Icon(Icons.videocam_rounded, color: Colors.white24, size: 36),
-                ),
-                if (durationStr.isNotEmpty)
-                  _buildDurationBadge(durationStr),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF1B272E),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF1E2B34),
+                Color(0xFF141D22),
               ],
             ),
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            fit: StackFit.expand,
+            children: [
+              const Center(
+                child: Icon(Icons.videocam_rounded, color: Colors.white24, size: 36),
+              ),
+              if (durationStr.isNotEmpty)
+                _buildDurationBadge(durationStr),
+            ],
           ),
         ),
       ),
@@ -1247,9 +1277,13 @@ class ImageDimensionResolver {
 
 class _InlineImageThumbnail extends StatefulWidget {
   final Uint8List imageBytes;
+  final double maxBubbleWidth;
+  final bool hasCaption;
 
   const _InlineImageThumbnail({
     required this.imageBytes,
+    required this.maxBubbleWidth,
+    this.hasCaption = false,
   });
 
   @override
@@ -1305,26 +1339,41 @@ class _InlineImageThumbnailState extends State<_InlineImageThumbnail> {
   @override
   Widget build(BuildContext context) {
     final rawAspect = _aspectRatio ?? (1.0);
-    final aspect = rawAspect.clamp(0.72, 1.78);
+    final aspect = rawAspect > 0 ? rawAspect.clamp(9.0 / 16.0, 16.0 / 9.0) : 1.0;
 
-    return ConstrainedBox(
-      constraints: const BoxConstraints(
-        minHeight: 130,
-        maxHeight: 290,
-      ),
+    final double cardWidth;
+    final double cardHeight;
+    if (widget.hasCaption) {
+      cardWidth = widget.maxBubbleWidth;
+      if (aspect < 1.0) {
+        cardHeight = 315.0;
+      } else {
+        cardHeight = (widget.maxBubbleWidth / aspect).clamp(130.0, 315.0);
+      }
+    } else {
+      if (aspect < 1.0) {
+        cardHeight = 315.0;
+        cardWidth = (315.0 * aspect).clamp(165.0, widget.maxBubbleWidth);
+      } else {
+        cardWidth = widget.maxBubbleWidth;
+        cardHeight = (widget.maxBubbleWidth / aspect).clamp(130.0, 315.0);
+      }
+    }
+
+    return SizedBox(
+      width: cardWidth,
+      height: cardHeight,
       child: ClipRRect(
-        child: AspectRatio(
-          aspectRatio: aspect,
-          child: Image.memory(
-            widget.imageBytes,
-            fit: BoxFit.cover,
-            gaplessPlayback: true,
-            errorBuilder: (context, error, stackTrace) {
-              return const Center(
-                child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 36),
-              );
-            },
-          ),
+        borderRadius: BorderRadius.circular(10),
+        child: Image.memory(
+          widget.imageBytes,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (context, error, stackTrace) {
+            return const Center(
+              child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 36),
+            );
+          },
         ),
       ),
     );

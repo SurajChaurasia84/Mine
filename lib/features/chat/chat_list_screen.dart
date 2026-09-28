@@ -117,7 +117,15 @@ class _ChatListScreenState extends State<ChatListScreen> {
         }
       }
 
-      // 2. Fetch/decrypt updated last messages and unread counts in parallel
+      // 2. Immediately render conversations with available cached metadata (0ms cold start delay)
+      if (mounted) {
+        setState(() {
+          _conversations = List.from(convs);
+          _isLoading = false;
+        });
+      }
+
+      // 3. Fetch/decrypt updated last messages and unread counts in background
       await Future.wait(convs.map((conv) async {
         if (conv.contact != null) {
           final lastMsg = await chatRepo.getLastMessage(conv.id);
@@ -173,7 +181,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
       if (mounted) {
         setState(() {
-          _conversations = convs;
+          _conversations = List.from(convs);
           _isLoading = false;
         });
       }

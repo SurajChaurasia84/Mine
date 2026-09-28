@@ -6,6 +6,7 @@ import 'emoji_picker_widget.dart';
 
 class ChatInputBar extends StatefulWidget {
   final Function(String text) onSend;
+  final VoidCallback? onGallery;
   final VoidCallback? onAttach;
   final VoidCallback? onCamera;
   final VoidCallback? onTap;
@@ -16,6 +17,7 @@ class ChatInputBar extends StatefulWidget {
   const ChatInputBar({
     super.key,
     required this.onSend,
+    this.onGallery,
     this.onAttach,
     this.onCamera,
     this.onTap,
@@ -307,15 +309,15 @@ class ChatInputBarState extends State<ChatInputBar> {
                             ),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.attach_file, color: MineTheme.textMuted, size: 22),
-                            tooltip: 'Attach',
-                            onPressed: widget.onAttach,
+                            icon: const Icon(Icons.photo_library_outlined, color: MineTheme.textMuted, size: 22),
+                            tooltip: 'Gallery',
+                            onPressed: widget.onGallery ?? widget.onAttach,
                             visualDensity: VisualDensity.compact,
                           ),
                           IconButton(
                             icon: const Icon(Icons.camera_alt_outlined, color: MineTheme.textMuted, size: 22),
                             tooltip: 'Camera',
-                            onPressed: widget.onCamera ?? widget.onAttach,
+                            onPressed: widget.onCamera ?? widget.onGallery ?? widget.onAttach,
                             visualDensity: VisualDensity.compact,
                           ),
                           const SizedBox(width: 4),

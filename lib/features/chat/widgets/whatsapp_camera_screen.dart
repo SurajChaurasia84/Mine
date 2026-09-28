@@ -5,12 +5,18 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import '../../../app/theme.dart';
+import '../../../services/media/media_picker_helper.dart';
 
 class CapturedMedia {
   final Uint8List rawBytes;
   final String mediaType; // 'photo' | 'video'
+  final List<CapturedMedia>? additionalMedia;
 
-  CapturedMedia({required this.rawBytes, required this.mediaType});
+  CapturedMedia({
+    required this.rawBytes,
+    required this.mediaType,
+    this.additionalMedia,
+  });
 }
 
 class WhatsAppCameraScreen extends StatefulWidget {
@@ -237,25 +243,27 @@ class _WhatsAppCameraScreenState extends State<WhatsAppCameraScreen> with Widget
 
   Future<void> _pickFromGallery() async {
     try {
-      final picker = ImagePicker();
-      final XFile? file = await picker.pickMedia(
-        imageQuality: 85,
-        maxWidth: 1920,
-        maxHeight: 1920,
-      );
-      if (file != null) {
-        final bytes = await file.readAsBytes();
-        final isVideo = file.path.toLowerCase().endsWith('.mp4') ||
-            file.path.toLowerCase().endsWith('.mov') ||
-            file.path.toLowerCase().endsWith('.mkv') ||
-            file.path.toLowerCase().endsWith('.webm') ||
-            file.path.toLowerCase().endsWith('.avi');
-        if (!mounted) return;
-        Navigator.pop(
-          context,
-          CapturedMedia(rawBytes: bytes, mediaType: isVideo ? 'video' : 'photo'),
-        );
+      final items = await MediaPickerHelper.pickMultipleMedia();
+      if (items.isEmpty) return;
+
+      final first = items.first;
+      final additional = <CapturedMedia>[];
+      for (int i = 1; i < items.length; i++) {
+        additional.add(CapturedMedia(
+          rawBytes: items[i].rawBytes,
+          mediaType: items[i].mediaType,
+        ));
       }
+
+      if (!mounted) return;
+      Navigator.pop(
+        context,
+        CapturedMedia(
+          rawBytes: first.rawBytes,
+          mediaType: first.mediaType,
+          additionalMedia: additional.isNotEmpty ? additional : null,
+        ),
+      );
     } catch (_) {}
   }
 

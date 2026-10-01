@@ -158,7 +158,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(
           children: [
-            Icon(Icons.edit_rounded, color: MineTheme.primaryTeal),
+            Icon(Icons.edit_rounded, color: MineTheme.accentGreen),
             SizedBox(width: 10),
             Text('Edit Your Name', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           ],
@@ -183,9 +183,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 filled: true,
                 fillColor: MineTheme.backgroundDark,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                prefixIcon: const Icon(Icons.person_outline_rounded, size: 20, color: MineTheme.primaryTeal),
+                prefixIcon: const Icon(Icons.person_outline_rounded, size: 20, color: MineTheme.textMuted),
                 suffixIcon: IconButton(
-                  icon: const Icon(Icons.emoji_emotions_outlined, color: MineTheme.primaryTeal, size: 22),
+                  icon: const Icon(Icons.emoji_emotions_outlined, color: MineTheme.accentGreen, size: 22),
                   tooltip: 'Emoji',
                   onPressed: () => showEmojiPicker(ctx),
                 ),
@@ -240,7 +240,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: const Row(
             children: [
-              Icon(Icons.lock_reset_rounded, color: MineTheme.primaryTeal),
+              Icon(Icons.lock_reset_rounded, color: MineTheme.accentGreen),
               SizedBox(width: 10),
               Text('Change Passcode', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ],
@@ -268,7 +268,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   filled: true,
                   fillColor: MineTheme.backgroundDark,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                  prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20, color: MineTheme.primaryTeal),
+                  prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20, color: MineTheme.accentGreen),
                 ),
               ),
               if (dialogError != null) ...[
@@ -449,7 +449,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ),
                         const SizedBox(width: 6),
-                        const Icon(Icons.edit_rounded, size: 16, color: MineTheme.primaryTeal),
+                        const Icon(Icons.edit_rounded, size: 16, color: MineTheme.accentGreen),
                       ],
                     ),
                   ),
@@ -481,7 +481,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 const SizedBox(
                   width: 32,
-                  child: Icon(Icons.perm_identity_rounded, size: 24, color: MineTheme.primaryTeal),
+                  child: Icon(Icons.perm_identity_rounded, size: 24, color: MineTheme.textMuted),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -498,7 +498,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
-                          color: MineTheme.accentGreen,
+                          color: MineTheme.textMuted,
                           letterSpacing: 0.8,
                         ),
                       ),
@@ -534,7 +534,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   const SizedBox(
                     width: 32,
-                    child: Icon(Icons.lock_outline_rounded, size: 24, color: MineTheme.primaryTeal),
+                    child: Icon(Icons.lock_outline_rounded, size: 24, color: MineTheme.textMuted),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
@@ -552,7 +552,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
                             letterSpacing: _showPasscode ? 2.0 : 4.0,
-                            color: MineTheme.accentGreen,
+                            color: MineTheme.textMuted,
                           ),
                         ),
                       ],
@@ -597,7 +597,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   const SizedBox(
                     width: 32,
-                    child: Icon(Icons.share_outlined, size: 24, color: MineTheme.primaryTeal),
+                    child: Icon(Icons.share_outlined, size: 24, color: MineTheme.textMuted),
                   ),
                   const SizedBox(width: 14),
                   const Expanded(
@@ -661,7 +661,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 const SizedBox(
                   width: 32,
-                  child: Icon(Icons.lock_outline_rounded, size: 24, color: MineTheme.primaryTeal),
+                  child: Icon(Icons.lock_outline_rounded, size: 24, color: MineTheme.textMuted),
                 ),
                 const SizedBox(width: 14),
                 const Expanded(
@@ -694,7 +694,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(width: 16),
                       const SizedBox(
                         width: 28,
-                        child: Icon(Icons.password_rounded, size: 22, color: MineTheme.accentGreen),
+                        child: Icon(Icons.password_rounded, size: 22, color: MineTheme.textMuted),
                       ),
                       const SizedBox(width: 12),
                       const Expanded(

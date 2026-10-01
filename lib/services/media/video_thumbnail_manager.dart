@@ -135,6 +135,11 @@ class VideoThumbnailManager {
 
   /// Retrieves persistent static thumbnail bytes from ROM if previously saved
   static Uint8List? getPersistentThumbnail(String? messageId, [Uint8List? bytes]) {
+    if (bytes != null && bytes.isNotEmpty) {
+      final key = getHashKey(bytes);
+      final inMemory = _infoCache[key]?.thumbnailBytes;
+      if (inMemory != null && inMemory.isNotEmpty) return inMemory;
+    }
     if (kIsWeb || _mediaDir == null || !_mediaDir!.existsSync()) return null;
     try {
       if (messageId != null && messageId.isNotEmpty) {

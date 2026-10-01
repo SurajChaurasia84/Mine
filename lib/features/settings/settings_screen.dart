@@ -7,6 +7,7 @@ import '../../core/crypto/key_pair_bundle.dart';
 import '../../core/storage/app_database.dart';
 import '../../core/storage/secure_key_store.dart';
 import '../../core/utils/avatar_colors.dart';
+import '../../services/auth/app_lock_service.dart';
 import '../../services/connection_manager/connection_manager.dart';
 import '../chat/widgets/emoji_picker_widget.dart';
 
@@ -23,6 +24,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _passcode = '';
   String _displayName = '';
   bool _showPasscode = false;
+  bool _appLockEnabled = false;
+  bool _devicePinEnabled = true;
 
   @override
   void initState() {
@@ -37,6 +40,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _passcode = keyStore.cachedPasscode!;
     }
     _loadIdentityInfo();
+    _loadAppLockSettings();
+  }
+
+  Future<void> _loadAppLockSettings() async {
+    final keyStore = context.read<SecureKeyStore>();
+    final lockEnabled = await keyStore.isAppLockEnabled();
+    final pinEnabled = await keyStore.isDevicePinEnabled();
+    if (mounted) {
+      setState(() {
+        _appLockEnabled = lockEnabled;
+        _devicePinEnabled = pinEnabled;
+      });
+    }
+  }
+
+  Future<void> _toggleAppLock(bool value) async {
+    final keyStore = context.read<SecureKeyStore>();
+    final bool authenticated = await AppLockService.authenticate(
+      reason: value
+          ? 'Verify your screen lock to turn on App Lock'
+          : 'Verify your screen lock to turn off App Lock',
+    );
+
+    if (!authenticated) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Authentication required to change App Lock settings'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
+    await keyStore.setAppLockEnabled(value);
+    if (mounted) {
+      setState(() {
+        _appLockEnabled = value;
+      });
+    }
   }
 
   Future<void> _loadIdentityInfo() async {
@@ -591,6 +635,89 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
               ),
+            ),
+          ),
+
+          const SizedBox(height: 28),
+
+          // SECURITY & APP LOCK Section
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 8),
+            child: Text(
+              'SECURITY',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: MineTheme.textMuted,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+
+          // Master App Lock Toggle
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 32,
+                  child: Icon(Icons.lock_outline_rounded, size: 24, color: MineTheme.primaryTeal),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Text(
+                    'App lock',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: MineTheme.textLight),
+                  ),
+                ),
+                Switch.adaptive(
+                  value: _appLockEnabled,
+                  activeTrackColor: MineTheme.accentGreen,
+                  onChanged: _toggleAppLock,
+                ),
+              ],
+            ),
+          ),
+
+          // Sub-option when App Lock is ON: Use screen lock to unlock
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 250),
+            crossFadeState: _appLockEnabled ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+            firstChild: const SizedBox.shrink(),
+            secondChild: Column(
+              children: [
+                Divider(height: 1, color: Colors.white.withAlpha(12), indent: 46),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 16),
+                      const SizedBox(
+                        width: 28,
+                        child: Icon(Icons.password_rounded, size: 22, color: MineTheme.accentGreen),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Use screen lock to unlock',
+                          style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w500, color: MineTheme.textLight),
+                        ),
+                      ),
+                      Switch.adaptive(
+                        value: _devicePinEnabled,
+                        activeTrackColor: MineTheme.accentGreen,
+                        onChanged: (val) async {
+                          final keyStore = context.read<SecureKeyStore>();
+                          await keyStore.setDevicePinEnabled(val);
+                          setState(() {
+                            _devicePinEnabled = val;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
 

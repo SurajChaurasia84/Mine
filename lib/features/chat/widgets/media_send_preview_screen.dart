@@ -33,6 +33,7 @@ class MediaSendPreviewScreen extends StatefulWidget {
   final String mediaType; // 'photo' | 'video'
   final String recipientName;
   final List<MediaPreviewItem>? initialItems;
+  final void Function(MediaSendResult result)? onSend;
 
   const MediaSendPreviewScreen({
     super.key,
@@ -40,6 +41,7 @@ class MediaSendPreviewScreen extends StatefulWidget {
     required this.mediaType,
     required this.recipientName,
     this.initialItems,
+    this.onSend,
   });
 
   @override
@@ -50,6 +52,7 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
   final TextEditingController _captionController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _isOverlayVisible = true;
+  bool _isDisposed = false;
 
   late List<MediaPreviewItem> _items;
   int _currentIndex = 0;
@@ -80,20 +83,25 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
   }
 
   void _onVideoUpdate() {
-    if (!mounted) return;
+    if (!mounted || _isDisposed) return;
     final item = _items.isNotEmpty && _currentIndex < _items.length ? _items[_currentIndex] : null;
-    if (item?.videoController == null) return;
-    final value = item!.videoController!.value;
-    if (value.isInitialized && value.duration > Duration.zero && value.position >= value.duration) {
-      if (value.isPlaying) {
-        item.videoController!.pause();
-        item.videoController!.seekTo(Duration.zero);
+    if (item?.videoController == null || !item!.isVideoInitialized) return;
+    try {
+      final value = item.videoController!.value;
+      if (value.isInitialized && value.duration > Duration.zero && value.position >= value.duration) {
+        if (value.isPlaying) {
+          item.videoController!.pause();
+          item.videoController!.seekTo(Duration.zero);
+        }
       }
-    }
-    setState(() {});
+      if (mounted && !_isDisposed) {
+        setState(() {});
+      }
+    } catch (_) {}
   }
 
   Future<void> _initVideoForItem(MediaPreviewItem item) async {
+    if (_isDisposed) return;
     if (item.videoController != null && item.isVideoInitialized) return;
     try {
       if (kIsWeb) {
@@ -104,18 +112,25 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
         final tempPath = '${tempDir.path}/preview_${DateTime.now().millisecondsSinceEpoch}_${item.id}.mp4';
         item.tempVideoFile = File(tempPath);
         await item.tempVideoFile!.writeAsBytes(item.rawBytes, flush: true);
+        if (_isDisposed) return;
         item.videoController = VideoPlayerController.file(item.tempVideoFile!);
       }
 
       await item.videoController!.initialize();
-      item.videoController!.addListener(_onVideoUpdate);
-      if (mounted) {
-        setState(() {
-          item.isVideoInitialized = true;
-        });
-        item.videoController!.setLooping(false);
-        item.videoController!.play();
+      if (_isDisposed || !mounted) {
+        final c = item.videoController;
+        item.videoController = null;
+        item.isVideoInitialized = false;
+        c?.dispose();
+        return;
       }
+
+      item.videoController!.addListener(_onVideoUpdate);
+      setState(() {
+        item.isVideoInitialized = true;
+      });
+      item.videoController!.setLooping(false);
+      item.videoController!.play();
     } catch (e) {
       debugPrint('[MediaSendPreview] Error initializing video: $e');
     }
@@ -127,9 +142,11 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
     _items[_currentIndex].caption = _captionController.text;
 
     // Pause previous video if playing
-    if (_items[_currentIndex].videoController?.value.isPlaying == true) {
-      _items[_currentIndex].videoController!.pause();
-    }
+    try {
+      if (_items[_currentIndex].videoController?.value.isPlaying == true) {
+        _items[_currentIndex].videoController!.pause();
+      }
+    } catch (_) {}
 
     setState(() {
       _currentIndex = index;
@@ -143,14 +160,19 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
 
   @override
   void dispose() {
+    _isDisposed = true;
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: SystemUiOverlay.values);
     _captionController.dispose();
     _focusNode.dispose();
     _pageController.dispose();
 
     for (final item in _items) {
-      item.videoController?.removeListener(_onVideoUpdate);
-      item.videoController?.dispose();
+      final controller = item.videoController;
+      item.videoController = null;
+      item.isVideoInitialized = false;
+      controller?.removeListener(_onVideoUpdate);
+      controller?.dispose();
+
       if (!kIsWeb && item.tempVideoFile != null && item.tempVideoFile!.existsSync()) {
         try {
           item.tempVideoFile!.deleteSync();
@@ -227,30 +249,39 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
   void _handleSend() {
     if (_items.isEmpty) return;
     _items[_currentIndex].caption = _captionController.text.trim();
+    final result = MediaSendResult(
+      shouldSend: true,
+      caption: _items.first.caption,
+      editedBytes: _items.first.editedBytes,
+      items: _items,
+    );
+    if (widget.onSend != null) {
+      widget.onSend!(result);
+      return;
+    }
     Navigator.pop(
       context,
-      MediaSendResult(
-        shouldSend: true,
-        caption: _items.first.caption,
-        editedBytes: _items.first.editedBytes,
-        items: _items,
-      ),
+      result,
     );
   }
 
   void _toggleVideoPlayback() {
-    final currentItem = _items[_currentIndex];
-    if (currentItem.videoController == null) return;
-    setState(() {
-      if (currentItem.videoController!.value.isPlaying) {
-        currentItem.videoController!.pause();
-      } else {
-        if (currentItem.videoController!.value.position >= currentItem.videoController!.value.duration) {
-          currentItem.videoController!.seekTo(Duration.zero);
+    if (_isDisposed) return;
+    final currentItem = _items.isNotEmpty && _currentIndex < _items.length ? _items[_currentIndex] : null;
+    if (currentItem?.videoController == null || !currentItem!.isVideoInitialized) return;
+    try {
+      final controller = currentItem.videoController!;
+      setState(() {
+        if (controller.value.isPlaying) {
+          controller.pause();
+        } else {
+          if (controller.value.position >= controller.value.duration) {
+            controller.seekTo(Duration.zero);
+          }
+          controller.play();
         }
-        currentItem.videoController!.play();
-      }
-    });
+      });
+    } catch (_) {}
   }
 
   String _formatDuration(Duration duration) {
@@ -343,8 +374,12 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
     }
 
     final removed = _items.removeAt(index);
-    removed.videoController?.removeListener(_onVideoUpdate);
-    removed.videoController?.dispose();
+    final controller = removed.videoController;
+    removed.videoController = null;
+    removed.isVideoInitialized = false;
+    controller?.removeListener(_onVideoUpdate);
+    controller?.dispose();
+
     if (!kIsWeb && removed.tempVideoFile?.existsSync() == true) {
       try {
         removed.tempVideoFile!.deleteSync();
@@ -369,9 +404,18 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
   }
 
   Widget _buildVideoScrubber(MediaPreviewItem item) {
-    if (!item.isVideoInitialized || item.videoController == null) return const SizedBox.shrink();
-    final duration = item.videoController!.value.duration;
-    final position = item.videoController!.value.position;
+    if (_isDisposed || !item.isVideoInitialized || item.videoController == null) {
+      return const SizedBox.shrink();
+    }
+    Duration duration = Duration.zero;
+    Duration position = Duration.zero;
+    try {
+      final controller = item.videoController!;
+      duration = controller.value.duration;
+      position = controller.value.position;
+    } catch (_) {
+      return const SizedBox.shrink();
+    }
     final durationMs = duration.inMilliseconds.toDouble();
     final positionMs = position.inMilliseconds.toDouble().clamp(0.0, durationMs > 0 ? durationMs : 1.0);
 
@@ -403,7 +447,10 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
                 min: 0.0,
                 max: durationMs > 0 ? durationMs : 1.0,
                 onChanged: (value) {
-                  item.videoController!.seekTo(Duration(milliseconds: value.toInt()));
+                  if (_isDisposed || item.videoController == null) return;
+                  try {
+                    item.videoController!.seekTo(Duration(milliseconds: value.toInt()));
+                  } catch (_) {}
                 },
               ),
             ),
@@ -514,55 +561,71 @@ class _MediaSendPreviewScreenState extends State<MediaSendPreviewScreen> {
   }
 
   Widget _buildMediaItemView(MediaPreviewItem item) {
+    if (_isDisposed) return const SizedBox.shrink();
+
     if (item.isVideo) {
-      final isPlaying = item.videoController != null && item.videoController!.value.isPlaying;
+      final controller = item.videoController;
+      if (!item.isVideoInitialized || controller == null) {
+        return const Center(child: CircularProgressIndicator(color: MineTheme.accentGreen));
+      }
+
+      bool isPlaying = false;
+      double aspectRatio = 16 / 9;
+      try {
+        if (!controller.value.isInitialized) {
+          return const Center(child: CircularProgressIndicator(color: MineTheme.accentGreen));
+        }
+        isPlaying = controller.value.isPlaying;
+        aspectRatio = controller.value.aspectRatio;
+      } catch (_) {
+        return const SizedBox.shrink();
+      }
+
       return Center(
-        child: item.isVideoInitialized && item.videoController != null
-            ? AspectRatio(
-                aspectRatio: item.videoController!.value.aspectRatio,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    VideoPlayer(item.videoController!),
-                    AnimatedOpacity(
-                      duration: const Duration(milliseconds: 180),
-                      curve: Curves.easeInOut,
-                      opacity: _isOverlayVisible ? 1.0 : 0.0,
-                      child: IgnorePointer(
-                        ignoring: !_isOverlayVisible,
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(40),
-                            onTap: _toggleVideoPlayback,
-                            child: Container(
-                              width: 72,
-                              height: 72,
-                              decoration: BoxDecoration(
-                                color: Colors.black.withAlpha(140),
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withAlpha(80),
-                                    blurRadius: 12,
-                                    spreadRadius: 2,
-                                  ),
-                                ],
-                              ),
-                              child: Icon(
-                                isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                                color: Colors.white,
-                                size: 46,
-                              ),
+        child: AspectRatio(
+          aspectRatio: aspectRatio > 0 ? aspectRatio : 16 / 9,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              VideoPlayer(controller),
+              AnimatedOpacity(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeInOut,
+                opacity: _isOverlayVisible ? 1.0 : 0.0,
+                child: IgnorePointer(
+                  ignoring: !_isOverlayVisible,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(40),
+                      onTap: _toggleVideoPlayback,
+                      child: Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withAlpha(140),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withAlpha(80),
+                              blurRadius: 12,
+                              spreadRadius: 2,
                             ),
-                          ),
+                          ],
+                        ),
+                        child: Icon(
+                          isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 46,
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              )
-            : const CircularProgressIndicator(color: MineTheme.accentGreen),
+              ),
+            ],
+          ),
+        ),
       );
     } else {
       return Center(

@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, ValueNotifier;
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
@@ -40,6 +40,7 @@ class EphemeralMediaPayload {
     return {
       'type': 'ephemeral_media',
       'media_type': mediaType,
+      'mediaType': mediaType,
       'url': url,
       'key': mediaKeyBase64,
       'size': size,
@@ -62,8 +63,11 @@ class EphemeralMediaPayload {
       replyMap = Map<String, dynamic>.from(map['reply_to'] as Map);
     }
 
+    final rawType = (map['media_type'] ?? map['mediaType']) as String? ?? 'photo';
+    final mediaType = rawType == 'video' ? 'video' : 'photo';
+
     return EphemeralMediaPayload(
-      mediaType: map['media_type'] as String? ?? 'photo',
+      mediaType: mediaType,
       url: map['url'] as String? ?? '',
       mediaKeyBase64: map['key'] as String? ?? '',
       size: (map['size'] as num?)?.toInt() ?? 0,
@@ -73,7 +77,7 @@ class EphemeralMediaPayload {
       replyToMessageId: replyMap?['id'] as String?,
       replySenderName: replyMap?['sender_name'] as String?,
       replyText: replyMap?['text'] as String?,
-      replyMediaType: replyMap?['media_type'] as String?,
+      replyMediaType: (replyMap?['media_type'] ?? replyMap?['mediaType']) as String?,
     );
   }
 
@@ -82,8 +86,8 @@ class EphemeralMediaPayload {
   static EphemeralMediaPayload? tryParse(String jsonStr) {
     try {
       final map = jsonDecode(jsonStr);
-      if (map is Map<String, dynamic> && map['type'] == 'ephemeral_media') {
-        return EphemeralMediaPayload.fromMap(map);
+      if (map is Map && map['type'] == 'ephemeral_media') {
+        return EphemeralMediaPayload.fromMap(Map<String, dynamic>.from(map));
       }
     } catch (_) {}
     return null;
@@ -95,6 +99,26 @@ class EphemeralMediaService {
   final Sha256 _sha256 = Sha256();
   final Map<String, Uint8List> _memoryCache = {};
   Directory? _mediaDir;
+
+  /// Global map tracking live media upload progress per message ID (0.0 to 1.0)
+  static final Map<String, ValueNotifier<double>> uploadProgress = {};
+  static final Set<String> _cancelledUploads = {};
+
+  static ValueNotifier<double> getUploadProgressNotifier(String messageId) {
+    return uploadProgress.putIfAbsent(messageId, () => ValueNotifier<double>(0.0));
+  }
+
+  static bool isUploadCancelled(String messageId) => _cancelledUploads.contains(messageId);
+
+  static void cancelUpload(String messageId) {
+    _cancelledUploads.add(messageId);
+    uploadProgress.remove(messageId);
+  }
+
+  static void cleanupUpload(String messageId) {
+    _cancelledUploads.remove(messageId);
+    uploadProgress.remove(messageId);
+  }
 
   /// Retrieves or initializes the private app-only media storage directory.
   /// Uses a hidden folder and `.nomedia` file so media is strictly invisible to
@@ -276,6 +300,13 @@ class EphemeralMediaService {
     String? replyText,
     String? replyMediaType,
   }) async {
+    if (messageId != null && isUploadCancelled(messageId)) {
+      throw Exception('Upload cancelled');
+    }
+
+    if (messageId != null) {
+      getUploadProgressNotifier(messageId).value = 0.05;
+    }
     final processedBytes = mediaType == 'photo' ? _optimizePhotoBytes(rawBytes) : rawBytes;
     final keyBytes = generateMediaKey();
     final secretKey = SecretKey(keyBytes);
@@ -285,6 +316,10 @@ class EphemeralMediaService {
       processedBytes,
       secretKey: secretKey,
     );
+
+    if (messageId != null && isUploadCancelled(messageId)) {
+      throw Exception('Upload cancelled');
+    }
 
     // Pack into binary format: [1 byte nonce length][nonce][2 bytes mac length][mac][ciphertext]
     final builder = BytesBuilder();
@@ -300,15 +335,36 @@ class EphemeralMediaService {
     String blobUrl = '';
     String? inlineData;
 
-    // For tiny payloads <= 180KB (e.g. low-res thumbnail/tiny image), embed inline directly in E2EE message for 0ms instant delivery
+    // For tiny payloads <= 180KB (e.g. compressed photos), embed inline directly in E2EE message
     if (encryptedBlob.length <= 180000) {
-      inlineData = base64.encode(encryptedBlob);
-    } else {
-      try {
-        blobUrl = await _uploadToRelay(encryptedBlob);
-      } catch (e) {
-        // Log upload error
+      if (messageId != null) {
+        getUploadProgressNotifier(messageId).value = 0.40;
       }
+      inlineData = base64.encode(encryptedBlob);
+      if (messageId != null) {
+        getUploadProgressNotifier(messageId).value = 0.85;
+      }
+    } else {
+      if (messageId != null) {
+        getUploadProgressNotifier(messageId).value = 0.10;
+      }
+      try {
+        blobUrl = await _uploadToRelay(
+          encryptedBlob,
+          messageId: messageId,
+          onProgress: (p) {
+            if (messageId != null) {
+              getUploadProgressNotifier(messageId).value = 0.10 + (p * 0.85);
+            }
+          },
+        );
+      } catch (e) {
+        if (messageId != null && isUploadCancelled(messageId)) rethrow;
+      }
+    }
+
+    if (messageId != null && isUploadCancelled(messageId)) {
+      throw Exception('Upload cancelled');
     }
 
     if (blobUrl.isEmpty && inlineData == null) {
@@ -318,6 +374,10 @@ class EphemeralMediaService {
       } else {
         throw Exception('Media upload failed. Please check internet connection.');
       }
+    }
+
+    if (messageId != null) {
+      getUploadProgressNotifier(messageId).value = 1.0;
     }
 
     // Cache the original processed bytes under the media key, message ID, and URL
@@ -347,47 +407,106 @@ class EphemeralMediaService {
   }
 
   /// Uploads binary ciphertext to fast, reliable ephemeral relays (Bytebin / Filebin)
-  Future<String> _uploadToRelay(Uint8List encryptedBytes) async {
+  /// with real byte-level progress reporting.
+  Future<String> _uploadToRelay(
+    Uint8List encryptedBytes, {
+    String? messageId,
+    void Function(double)? onProgress,
+  }) async {
     // 1. Primary Relay: Bytebin (Direct raw binary POST, high-speed CDN, full CORS support)
     try {
-      final uri = Uri.parse('https://bytebin.lucko.me/post');
-      final response = await http.post(
-        uri,
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'User-Agent': 'MineMessenger/1.0',
-        },
-        body: encryptedBytes,
-      ).timeout(const Duration(seconds: 30));
-
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        if (json is Map && json['key'] != null) {
-          final key = json['key'] as String;
-          final directUrl = 'https://bytebin.lucko.me/$key';
-          return directUrl;
-        }
+      if (messageId != null && isUploadCancelled(messageId)) {
+        throw Exception('Upload cancelled');
       }
-    } catch (_) {}
+
+      final uri = Uri.parse('https://bytebin.lucko.me/post');
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 25);
+      try {
+        final request = await client.postUrl(uri);
+        request.headers.set(HttpHeaders.contentTypeHeader, 'application/octet-stream');
+        request.headers.set(HttpHeaders.userAgentHeader, 'MineMessenger/1.0');
+        request.contentLength = encryptedBytes.length;
+
+        final total = encryptedBytes.length;
+        const chunkSize = 32 * 1024;
+        int sent = 0;
+
+        for (int i = 0; i < total; i += chunkSize) {
+          if (messageId != null && isUploadCancelled(messageId)) {
+            request.abort();
+            throw Exception('Upload cancelled');
+          }
+          final end = (i + chunkSize < total) ? i + chunkSize : total;
+          request.add(encryptedBytes.sublist(i, end));
+          await request.flush();
+          sent = end;
+          if (total > 0) {
+            onProgress?.call((sent / total).clamp(0.0, 1.0));
+          }
+        }
+
+        final response = await request.close().timeout(const Duration(seconds: 35));
+        final responseBody = await utf8.decoder.bind(response).join();
+
+        if (response.statusCode == 201 || response.statusCode == 200) {
+          final json = jsonDecode(responseBody);
+          if (json is Map && json['key'] != null) {
+            final key = json['key'] as String;
+            return 'https://bytebin.lucko.me/$key';
+          }
+        }
+      } finally {
+        client.close();
+      }
+    } catch (e) {
+      if (messageId != null && isUploadCancelled(messageId)) rethrow;
+    }
 
     // 2. Secondary Relay: Filebin.net (Direct binary POST, CORS enabled, no auth needed)
     try {
+      if (messageId != null && isUploadCancelled(messageId)) {
+        throw Exception('Upload cancelled');
+      }
+
       final binId = 'mine_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}';
       final fileName = 'enc_${DateTime.now().millisecondsSinceEpoch}.bin';
       final uri = Uri.parse('https://filebin.net/$binId/$fileName');
-      final response = await http.post(
-        uri,
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'User-Agent': 'MineMessenger/1.0',
-        },
-        body: encryptedBytes,
-      ).timeout(const Duration(seconds: 35));
 
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        return 'https://filebin.net/$binId/$fileName';
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 25);
+      try {
+        final request = await client.postUrl(uri);
+        request.headers.set(HttpHeaders.contentTypeHeader, 'application/octet-stream');
+        request.headers.set(HttpHeaders.userAgentHeader, 'MineMessenger/1.0');
+        request.contentLength = encryptedBytes.length;
+
+        final total = encryptedBytes.length;
+        const chunkSize = 32 * 1024;
+        int sent = 0;
+
+        for (int i = 0; i < total; i += chunkSize) {
+          if (messageId != null && isUploadCancelled(messageId)) {
+            request.abort();
+            throw Exception('Upload cancelled');
+          }
+          final end = (i + chunkSize < total) ? i + chunkSize : total;
+          request.add(encryptedBytes.sublist(i, end));
+          await request.flush();
+          sent = end;
+          if (total > 0) {
+            onProgress?.call((sent / total).clamp(0.0, 1.0));
+          }
+        }
+
+        final response = await request.close().timeout(const Duration(seconds: 35));
+        if (response.statusCode == 201 || response.statusCode == 200) {
+          return 'https://filebin.net/$binId/$fileName';
+        }
+      } finally {
+        client.close();
       }
-    } catch (_) {}
+    } catch (e) {
+      if (messageId != null && isUploadCancelled(messageId)) rethrow;
+    }
 
     return '';
   }

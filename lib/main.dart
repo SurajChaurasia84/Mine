@@ -43,13 +43,19 @@ void main() async {
   final contactRepository = ContactRepository(appDatabase: appDatabase);
   final chatRepository = ChatRepository(appDatabase: appDatabase);
 
-  // Pre-fetch identity & displayName concurrently for fastest cold start
+  // Pre-fetch identity, displayName, and app lock state concurrently for instant lock gate
   final results = await Future.wait([
     secureKeyStore.getIdentity(),
     secureKeyStore.getDisplayName(),
+    secureKeyStore.isAppLockEnabled(),
+    secureKeyStore.isBiometricsEnabled(),
+    secureKeyStore.isDevicePinEnabled(),
   ]);
   final initialIdentity = results[0] as KeyPairBundle?;
   final initialDisplayName = results[1] as String?;
+  final initialAppLockEnabled = (results[2] as bool?) ?? false;
+  final initialBiometricsEnabled = (results[3] as bool?) ?? true;
+  final initialDevicePinEnabled = (results[4] as bool?) ?? true;
 
   runApp(
     MineApp(
@@ -60,6 +66,9 @@ void main() async {
       chatRepository: chatRepository,
       initialIdentity: initialIdentity,
       initialDisplayName: initialDisplayName,
+      initialAppLockEnabled: initialAppLockEnabled,
+      initialBiometricsEnabled: initialBiometricsEnabled,
+      initialDevicePinEnabled: initialDevicePinEnabled,
     ),
   );
 }

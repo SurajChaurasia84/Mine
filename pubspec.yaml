@@ -38,6 +38,7 @@ dependencies:
   pro_image_editor: ^13.5.0
   receive_sharing_intent: ^1.8.1
   local_auth: ^3.0.2
+  local_auth_android: ^2.2.0
 
 dev_dependencies:
   flutter_test:

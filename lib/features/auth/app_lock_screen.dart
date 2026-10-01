@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../app/theme.dart';
 import '../../services/auth/app_lock_service.dart';
@@ -74,9 +75,16 @@ class _AppLockScreenState extends State<AppLockScreen> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0B141B),
-      body: Stack(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          SystemNavigator.pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0B141B),
+        body: Stack(
         children: [
           // Background ambient gradient glow
           Positioned(
@@ -228,6 +236,7 @@ class _AppLockScreenState extends State<AppLockScreen> with SingleTickerProvider
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 }

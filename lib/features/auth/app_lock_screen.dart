@@ -122,56 +122,44 @@ class _AppLockScreenState extends State<AppLockScreen> with SingleTickerProvider
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Animated Glowing Biometric Icon Badge
+                    // Animated App Icon with pulse and glow
                     AnimatedBuilder(
                       animation: _pulseAnimation,
                       builder: (context, child) {
-                        final scale = 1.0 + (_pulseAnimation.value * 0.08);
-                        final glowAlpha = (60 + (_pulseAnimation.value * 80)).toInt();
+                        final scale = 1.0 + (_pulseAnimation.value * 0.06);
+                        final glowAlpha = (50 + (_pulseAnimation.value * 70)).toInt();
 
                         return Stack(
                           alignment: Alignment.center,
                           children: [
                             // Outer pulsing halo ring
                             Container(
-                              width: 140 * scale,
-                              height: 140 * scale,
+                              width: 124 * scale,
+                              height: 124 * scale,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: MineTheme.accentGreen.withAlpha(glowAlpha ~/ 3),
+                                color: Colors.white.withAlpha(glowAlpha ~/ 8),
                               ),
                             ),
-                            // Inner glowing ring
+                            // App Icon with glow
                             Container(
-                              width: 110,
-                              height: 110,
                               decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: const LinearGradient(
-                                  colors: [
-                                    Color(0xFF1F2C34),
-                                    Color(0xFF121B22),
-                                  ],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                                border: Border.all(
-                                  color: MineTheme.accentGreen.withAlpha(120),
-                                  width: 2.2,
-                                ),
+                                borderRadius: BorderRadius.circular(24),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: MineTheme.accentGreen.withAlpha(glowAlpha),
+                                    color: const Color(0xFFE53935).withAlpha(glowAlpha),
                                     blurRadius: 28,
                                     spreadRadius: 2,
                                   ),
                                 ],
                               ),
-                              child: const Center(
-                                child: Icon(
-                                  Icons.fingerprint_rounded,
-                                  color: MineTheme.accentGreen,
-                                  size: 58,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(24),
+                                child: Image.asset(
+                                  'assets/icon.png',
+                                  width: 86,
+                                  height: 86,
+                                  fit: BoxFit.cover,
                                 ),
                               ),
                             ),

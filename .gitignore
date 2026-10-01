@@ -9,6 +9,7 @@
 .buildlog/
 .history
 .svn/
+.kotlin/
 .swiftpm/
 migrate_working_dir/
 

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../core/crypto/crypto_service.dart';
 import '../core/crypto/key_pair_bundle.dart';
@@ -12,7 +11,6 @@ import '../features/chat/chat_list_screen.dart';
 import '../features/media/encrypted_media_service.dart';
 import '../features/onboarding/identity_setup_screen.dart';
 import '../features/chat/share_target_select_screen.dart';
-import '../services/auth/app_lock_service.dart';
 import '../services/connection_manager/connection_manager.dart';
 import '../services/media/incoming_share_service.dart';
 import '../services/media/media_picker_helper.dart';
@@ -28,6 +26,9 @@ class MineApp extends StatefulWidget {
   final ChatRepository chatRepository;
   final KeyPairBundle? initialIdentity;
   final String? initialDisplayName;
+  final bool initialAppLockEnabled;
+  final bool initialBiometricsEnabled;
+  final bool initialDevicePinEnabled;
 
   const MineApp({
     super.key,
@@ -38,6 +39,9 @@ class MineApp extends StatefulWidget {
     required this.chatRepository,
     this.initialIdentity,
     this.initialDisplayName,
+    this.initialAppLockEnabled = false,
+    this.initialBiometricsEnabled = true,
+    this.initialDevicePinEnabled = true,
   });
 
   @override
@@ -49,10 +53,10 @@ class _MineAppState extends State<MineApp> with WidgetsBindingObserver {
   String? _displayName;
   bool _isCheckingIdentity = false;
 
-  bool _isAppLockEnabled = false;
-  bool _isLocked = false;
-  bool _allowBiometrics = true;
-  bool _allowDevicePin = true;
+  late bool _isAppLockEnabled;
+  late bool _isLocked;
+  late bool _allowBiometrics;
+  late bool _allowDevicePin;
   List<MediaPreviewItem>? _pendingSharedMedia;
 
   SignalingClient? _signalingClient;
@@ -63,6 +67,10 @@ class _MineAppState extends State<MineApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _isAppLockEnabled = widget.initialAppLockEnabled;
+    _isLocked = widget.initialAppLockEnabled;
+    _allowBiometrics = widget.initialBiometricsEnabled;
+    _allowDevicePin = widget.initialDevicePinEnabled;
     _checkAppLock();
     _displayName = widget.initialDisplayName;
     if (widget.initialIdentity != null) {
@@ -88,7 +96,10 @@ class _MineAppState extends State<MineApp> with WidgetsBindingObserver {
         _isAppLockEnabled = enabled;
         _allowBiometrics = bio;
         _allowDevicePin = pin;
-        _isLocked = enabled;
+        // Keep locked if enabled
+        if (enabled && widget.initialAppLockEnabled) {
+          _isLocked = true;
+        }
       });
     }
   }
@@ -125,27 +136,10 @@ class _MineAppState extends State<MineApp> with WidgetsBindingObserver {
       return;
     }
 
-    final isLockEnabled = await widget.secureKeyStore.isAppLockEnabled();
+    final isLockEnabled = _isAppLockEnabled || await widget.secureKeyStore.isAppLockEnabled();
     if (isLockEnabled && _isLocked) {
+      // Store pending items so they open upon unlock from AppLockScreen
       _pendingSharedMedia = items;
-      final bio = await widget.secureKeyStore.isBiometricsEnabled();
-      final pin = await widget.secureKeyStore.isDevicePinEnabled();
-      final bool success = await AppLockService.authenticate(
-        allowBiometrics: bio,
-        allowDeviceCredentials: pin,
-        reason: 'Unlock to share media to Mine',
-      );
-
-      if (success && mounted) {
-        setState(() {
-          _isLocked = false;
-        });
-        _openShareTargetScreen(items);
-        _pendingSharedMedia = null;
-      } else {
-        // User cancelled or failed authentication -> safely exit to gallery
-        SystemNavigator.pop();
-      }
       return;
     }
 
@@ -153,13 +147,23 @@ class _MineAppState extends State<MineApp> with WidgetsBindingObserver {
   }
 
   void _openShareTargetScreen(List<MediaPreviewItem> items) {
-    _navigatorKey.currentState?.push(
-      MaterialPageRoute(
-        builder: (_) => ShareTargetSelectScreen(
-          sharedMediaItems: items,
+    void push() {
+      _navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => ShareTargetSelectScreen(
+            sharedMediaItems: items,
+          ),
         ),
-      ),
-    );
+      );
+    }
+
+    if (_navigatorKey.currentState != null) {
+      push();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        push();
+      });
+    }
   }
 
   Future<void> _checkExistingIdentity() async {
@@ -258,23 +262,30 @@ class _MineAppState extends State<MineApp> with WidgetsBindingObserver {
         debugShowCheckedModeBanner: false,
         theme: MineTheme.darkTheme,
         builder: (context, child) {
-          if (_isLocked && _isAppLockEnabled) {
-            return AppLockScreen(
-              allowBiometrics: _allowBiometrics,
-              allowDevicePin: _allowDevicePin,
-              onUnlocked: () {
-                setState(() {
-                  _isLocked = false;
-                });
-                if (_pendingSharedMedia != null && _pendingSharedMedia!.isNotEmpty) {
-                  final media = _pendingSharedMedia!;
-                  _pendingSharedMedia = null;
-                  _openShareTargetScreen(media);
-                }
-              },
-            );
-          }
-          return child ?? const SizedBox.shrink();
+          return Stack(
+            children: [
+              ?child,
+              if (_isLocked && _isAppLockEnabled)
+                Positioned.fill(
+                  child: AppLockScreen(
+                    allowBiometrics: _allowBiometrics,
+                    allowDevicePin: _allowDevicePin,
+                    onUnlocked: () {
+                      setState(() {
+                        _isLocked = false;
+                      });
+                      if (_pendingSharedMedia != null && _pendingSharedMedia!.isNotEmpty) {
+                        final media = _pendingSharedMedia!;
+                        _pendingSharedMedia = null;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          _openShareTargetScreen(media);
+                        });
+                      }
+                    },
+                  ),
+                ),
+            ],
+          );
         },
         home: _isCheckingIdentity
             ? const Scaffold(

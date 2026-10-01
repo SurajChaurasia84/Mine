@@ -9,7 +9,10 @@ import '../data/repositories/contact_repository.dart';
 import '../features/chat/chat_list_screen.dart';
 import '../features/media/encrypted_media_service.dart';
 import '../features/onboarding/identity_setup_screen.dart';
+import '../features/chat/share_target_select_screen.dart';
 import '../services/connection_manager/connection_manager.dart';
+import '../services/media/incoming_share_service.dart';
+import '../services/media/media_picker_helper.dart';
 import '../services/notification/privacy_notification_service.dart';
 import '../services/signaling/signaling_client.dart';
 import 'theme.dart';
@@ -45,6 +48,7 @@ class _MineAppState extends State<MineApp> {
 
   SignalingClient? _signalingClient;
   ConnectionManager? _connectionManager;
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -58,6 +62,26 @@ class _MineAppState extends State<MineApp> {
       _isCheckingIdentity = true;
       _checkExistingIdentity();
     }
+
+    IncomingShareService.listen(
+      onMediaReceived: _handleIncomingSharedMedia,
+    );
+  }
+
+  void _handleIncomingSharedMedia(List<MediaPreviewItem> items) {
+    if (items.isEmpty) return;
+    if (_identity == null) {
+      debugPrint('[MineApp] User has not set up identity yet, ignoring shared media.');
+      return;
+    }
+
+    _navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => ShareTargetSelectScreen(
+          sharedMediaItems: items,
+        ),
+      ),
+    );
   }
 
   Future<void> _checkExistingIdentity() async {
@@ -125,6 +149,7 @@ class _MineAppState extends State<MineApp> {
 
   @override
   void dispose() {
+    IncomingShareService.dispose();
     _signalingClient?.dispose();
     _connectionManager?.dispose();
     super.dispose();
@@ -149,6 +174,7 @@ class _MineAppState extends State<MineApp> {
           ChangeNotifierProvider<ConnectionManager>.value(value: _connectionManager!),
       ],
       child: MaterialApp(
+        navigatorKey: _navigatorKey,
         title: 'Mine',
         debugShowCheckedModeBanner: false,
         theme: MineTheme.darkTheme,

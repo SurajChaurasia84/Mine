@@ -14,14 +14,23 @@ class SecureKeyStore {
   static const String _identityKey = 'mine_identity_bundle_v1';
   static const String _passcodeKey = 'mine_security_passcode_v1';
   static const String _displayNameKey = 'mine_display_name_v1';
+  static const String _appLockEnabledKey = 'mine_pref_app_lock_enabled_v1';
+  static const String _biometricsEnabledKey = 'mine_pref_app_lock_biometrics_v1';
+  static const String _devicePinEnabledKey = 'mine_pref_app_lock_device_pin_v1';
   static final Map<String, String> _webSessionCache = {};
 
   KeyPairBundle? _cachedIdentity;
   String? _cachedPasscode;
   String? _cachedDisplayName;
+  bool? _cachedAppLockEnabled;
+  bool? _cachedBiometricsEnabled;
+  bool? _cachedDevicePinEnabled;
 
   String? get cachedDisplayName => _cachedDisplayName;
   String? get cachedPasscode => _cachedPasscode;
+  bool? get cachedAppLockEnabled => _cachedAppLockEnabled;
+  bool? get cachedBiometricsEnabled => _cachedBiometricsEnabled;
+  bool? get cachedDevicePinEnabled => _cachedDevicePinEnabled;
 
   SecureKeyStore({
     FlutterSecureStorage? storage,
@@ -213,6 +222,72 @@ class SecureKeyStore {
       await _storage.write(key: _displayNameKey, value: clean);
     } catch (e) {
       debugPrint('[SecureKeyStore] Display name save error: $e');
+    }
+  }
+
+  /// Check if App Lock is enabled (default: false)
+  Future<bool> isAppLockEnabled() async {
+    if (_cachedAppLockEnabled != null) return _cachedAppLockEnabled!;
+    try {
+      final val = await _storage.read(key: _appLockEnabledKey);
+      _cachedAppLockEnabled = val == 'true';
+    } catch (_) {
+      _cachedAppLockEnabled = false;
+    }
+    return _cachedAppLockEnabled!;
+  }
+
+  /// Enable or disable App Lock
+  Future<void> setAppLockEnabled(bool enabled) async {
+    _cachedAppLockEnabled = enabled;
+    try {
+      await _storage.write(key: _appLockEnabledKey, value: enabled ? 'true' : 'false');
+    } catch (e) {
+      debugPrint('[SecureKeyStore] App Lock save error: $e');
+    }
+  }
+
+  /// Check if biometrics (fingerprint/face) unlock is enabled (default: true)
+  Future<bool> isBiometricsEnabled() async {
+    if (_cachedBiometricsEnabled != null) return _cachedBiometricsEnabled!;
+    try {
+      final val = await _storage.read(key: _biometricsEnabledKey);
+      _cachedBiometricsEnabled = val == null ? true : val == 'true';
+    } catch (_) {
+      _cachedBiometricsEnabled = true;
+    }
+    return _cachedBiometricsEnabled!;
+  }
+
+  /// Enable or disable biometrics unlock
+  Future<void> setBiometricsEnabled(bool enabled) async {
+    _cachedBiometricsEnabled = enabled;
+    try {
+      await _storage.write(key: _biometricsEnabledKey, value: enabled ? 'true' : 'false');
+    } catch (e) {
+      debugPrint('[SecureKeyStore] Biometrics pref save error: $e');
+    }
+  }
+
+  /// Check if device screen lock (PIN/pattern) is enabled (default: true)
+  Future<bool> isDevicePinEnabled() async {
+    if (_cachedDevicePinEnabled != null) return _cachedDevicePinEnabled!;
+    try {
+      final val = await _storage.read(key: _devicePinEnabledKey);
+      _cachedDevicePinEnabled = val == null ? true : val == 'true';
+    } catch (_) {
+      _cachedDevicePinEnabled = true;
+    }
+    return _cachedDevicePinEnabled!;
+  }
+
+  /// Enable or disable device screen lock (PIN/pattern)
+  Future<void> setDevicePinEnabled(bool enabled) async {
+    _cachedDevicePinEnabled = enabled;
+    try {
+      await _storage.write(key: _devicePinEnabledKey, value: enabled ? 'true' : 'false');
+    } catch (e) {
+      debugPrint('[SecureKeyStore] Device PIN pref save error: $e');
     }
   }
 

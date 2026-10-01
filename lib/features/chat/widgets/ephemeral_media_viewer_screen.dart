@@ -10,6 +10,7 @@ import '../../../data/models/message_model.dart';
 import '../../../services/connection_manager/connection_manager.dart';
 import '../../../services/media/ephemeral_media_service.dart';
 import '../../../services/media/video_thumbnail_manager.dart';
+import 'message_bubble.dart';
 
 /// Data model representing a media item in the viewer
 class EphemeralMediaItem {
@@ -152,9 +153,7 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
     setState(() {
       _currentIndex = index;
       _isZoomed = false;
-      if (_items[index].mediaType != 'video') {
-        _setActiveVideoController(null);
-      }
+      _setActiveVideoController(null);
     });
   }
 
@@ -353,10 +352,18 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
 
   Widget _buildBottomBar(double bottomPadding, bool showOverlays, double bgOpacity) {
     final currentItem = _items[_currentIndex];
-    final bool isVideo = currentItem.mediaType == 'video';
+    final bool isVideo = currentItem.mediaType == 'video' ||
+        currentItem.message?.messageType == MessageType.video ||
+        currentItem.payload?.mediaType == 'video';
     final bool hasCaption = currentItem.caption != null && currentItem.caption!.trim().isNotEmpty;
+    final bool isPending = currentItem.message?.status == MessageStatus.pending &&
+        (EphemeralMediaService.uploadProgress[currentItem.message?.id]?.value ?? 0.0) < 1.0;
+    final bool isVideoReady = isVideo &&
+        !isPending &&
+        _activeVideoController != null &&
+        _activeVideoController!.value.isInitialized;
 
-    if (!isVideo && !hasCaption) return const SizedBox.shrink();
+    if (!isVideoReady && !hasCaption) return const SizedBox.shrink();
 
     return Positioned(
       bottom: 0,
@@ -385,9 +392,9 @@ class _EphemeralMediaViewerScreenState extends State<EphemeralMediaViewerScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (isVideo) _buildVideoScrubber(),
+                if (isVideoReady) _buildVideoScrubber(),
                 if (hasCaption) ...[
-                  if (isVideo) const SizedBox(height: 8),
+                  if (isVideoReady) const SizedBox(height: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(
@@ -555,6 +562,7 @@ class _MediaSlideItem extends StatefulWidget {
 
 class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderStateMixin {
   Uint8List? _mediaBytes;
+  Uint8List? _thumbnailBytes;
   bool _isLoadingBytes = false;
 
   // Video state
@@ -563,6 +571,7 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
   bool _isVideoInitialized = false;
   bool _isInitializingVideo = false;
   bool _isDisposed = false;
+  ValueNotifier<double>? _uploadNotifier;
 
   // Photo Zoom state
   final TransformationController _transController = TransformationController();
@@ -572,10 +581,74 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
   bool _isZoomed = false;
   int _pointerCount = 0;
 
+  bool get _isVideo {
+    if (widget.item.mediaType == 'video') return true;
+    if (widget.item.message?.messageType == MessageType.video) return true;
+    if (widget.item.payload?.mediaType == 'video') return true;
+    if (widget.item.message?.decryptedContent?.contains('"video"') == true) return true;
+    if (_mediaBytes != null && _mediaBytes!.length > 12) {
+      if ((_mediaBytes![4] == 0x66 && _mediaBytes![5] == 0x74 && _mediaBytes![6] == 0x79 && _mediaBytes![7] == 0x70) ||
+          (_mediaBytes![0] == 0x00 && _mediaBytes![1] == 0x00 && _mediaBytes![2] == 0x00 && _mediaBytes![3] >= 0x14)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool get _isUploading {
+    final status = widget.item.message?.status;
+    if (status == MessageStatus.pending) {
+      if (_uploadNotifier == null) return true;
+      return _uploadNotifier!.value < 1.0;
+    }
+    return false;
+  }
+
+  bool get _isDownloading {
+    if (_mediaBytes == null || _mediaBytes!.isEmpty) {
+      return true;
+    }
+    return _isLoadingBytes;
+  }
+
+  bool get _isTransferIncomplete {
+    if (_isUploading) return true;
+    if (_isDownloading) return true;
+    return false;
+  }
+
+  Uint8List? get _displayThumb {
+    final msgId = widget.item.message?.id;
+    final persistent = VideoThumbnailManager.getPersistentThumbnail(msgId, _mediaBytes);
+    if (persistent != null && persistent.isNotEmpty) return persistent;
+    if (_thumbnailBytes != null && _thumbnailBytes!.isNotEmpty) return _thumbnailBytes;
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
     _mediaBytes = widget.item.rawBytes;
+
+    final msgId = widget.item.message?.id;
+    if (msgId != null) {
+      _uploadNotifier = EphemeralMediaService.getUploadProgressNotifier(msgId);
+      _uploadNotifier!.addListener(_onUploadProgressChange);
+    }
+
+    _thumbnailBytes = VideoThumbnailManager.getPersistentThumbnail(msgId, _mediaBytes);
+    if (_thumbnailBytes == null && _mediaBytes != null && _mediaBytes!.isNotEmpty && _isVideo) {
+      VideoThumbnailManager.loadThumbnail(
+        _mediaBytes!,
+        messageId: msgId,
+      ).then((info) {
+        if (mounted && info.thumbnailBytes != null) {
+          setState(() {
+            _thumbnailBytes = info.thumbnailBytes;
+          });
+        }
+      });
+    }
 
     _zoomAnimController = AnimationController(
       vsync: this,
@@ -590,7 +663,7 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
 
     if (_mediaBytes == null || _mediaBytes!.isEmpty) {
       _loadMediaBytes();
-    } else if (widget.item.mediaType == 'video' && widget.isActive) {
+    } else if (_isVideo && widget.isActive && !_isTransferIncomplete) {
       _initVideo();
     }
   }
@@ -612,12 +685,14 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
         }
       } else {
         // Became active slide
-        if (widget.item.mediaType == 'video') {
-          if (_isVideoInitialized && _videoController != null) {
-            widget.onVideoControllerReady(_videoController);
-            _videoController!.play();
-          } else if (!_isInitializingVideo) {
-            _initVideo();
+        if (_isVideo) {
+          if (!_isTransferIncomplete) {
+            if (_isVideoInitialized && _videoController != null) {
+              widget.onVideoControllerReady(_videoController);
+              _videoController!.play();
+            } else if (!_isInitializingVideo) {
+              _initVideo();
+            }
           }
         }
       }
@@ -627,6 +702,7 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
   @override
   void dispose() {
     _isDisposed = true;
+    _uploadNotifier?.removeListener(_onUploadProgressChange);
     _transController.removeListener(_onTransformationChanged);
     _transController.dispose();
     _zoomAnimController.dispose();
@@ -657,6 +733,16 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
   void _onVideoUpdate() {
     if (!mounted || _videoController == null || _isDisposed) return;
     setState(() {});
+  }
+
+  void _onUploadProgressChange() {
+    if (!mounted) return;
+    if (_uploadNotifier != null && _uploadNotifier!.value >= 1.0) {
+      setState(() {});
+      if (_isVideo && !_isVideoInitialized && !_isInitializingVideo) {
+        _initVideo();
+      }
+    }
   }
 
   Future<void> _loadMediaBytes() async {
@@ -701,19 +787,39 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
           _mediaBytes = bytes;
           _isLoadingBytes = false;
         });
-        if (widget.item.mediaType == 'video' && widget.isActive) {
-          _initVideo();
+        if (_isVideo) {
+          VideoThumbnailManager.loadThumbnail(
+            bytes,
+            messageId: widget.item.message?.id,
+          ).then((info) {
+            if (mounted && info.thumbnailBytes != null) {
+              setState(() {
+                _thumbnailBytes = info.thumbnailBytes;
+              });
+            }
+          });
+          if (widget.isActive && !_isTransferIncomplete) {
+            _initVideo();
+          }
         }
       } else {
-        _isLoadingBytes = false;
+        if (!_isDisposed && mounted) {
+          setState(() {
+            _isLoadingBytes = false;
+          });
+        }
       }
     } catch (_) {
-      _isLoadingBytes = false;
+      if (!_isDisposed && mounted) {
+        setState(() {
+          _isLoadingBytes = false;
+        });
+      }
     }
   }
 
   Future<void> _initVideo() async {
-    if (_isDisposed || _isInitializingVideo || _isVideoInitialized) return;
+    if (_isDisposed || _isInitializingVideo || _isVideoInitialized || _isTransferIncomplete) return;
     _isInitializingVideo = true;
 
     try {
@@ -885,15 +991,13 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
 
   @override
   Widget build(BuildContext context) {
-    final bool isVideo = widget.item.mediaType == 'video';
+    final bool isVideo = _isVideo;
     final screenSize = MediaQuery.of(context).size;
+    final messageId = widget.item.message?.id;
 
     if (isVideo) {
       final bool isPlaying = _videoController != null && _videoController!.value.isPlaying;
-      final persistentThumb = VideoThumbnailManager.getPersistentThumbnail(
-        widget.item.message?.id ?? '',
-        _mediaBytes,
-      );
+      final displayThumb = _displayThumb;
 
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -902,7 +1006,7 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
         onVerticalDragUpdate: _onVideoVerticalDragUpdate,
         onVerticalDragEnd: _onVideoVerticalDragEnd,
         child: Center(
-          child: _isVideoInitialized && _videoController != null
+          child: (!_isTransferIncomplete && _isVideoInitialized && _videoController != null)
               ? AspectRatio(
                   aspectRatio: _videoController!.value.aspectRatio,
                   child: Stack(
@@ -947,38 +1051,48 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
                     ],
                   ),
                 )
-              : (persistentThumb != null && persistentThumb.isNotEmpty
-                  ? Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Image.memory(
-                          persistentThumb,
-                          fit: BoxFit.contain,
-                          width: screenSize.width,
+              : Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    if (displayThumb != null && displayThumb.isNotEmpty)
+                      Image.memory(
+                        displayThumb,
+                        fit: BoxFit.contain,
+                        width: screenSize.width,
+                      )
+                    else
+                      Container(
+                        color: Colors.black,
+                        width: screenSize.width,
+                        height: screenSize.height,
+                      ),
+                    if (_isUploading && messageId != null)
+                      MediaUploadCircularProgressBar(
+                        messageId: messageId,
+                        size: 56,
+                        onCancel: widget.onDismiss,
+                      )
+                    else
+                      Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withAlpha(140),
+                          shape: BoxShape.circle,
                         ),
-                        Container(
-                          width: 50,
-                          height: 50,
-                          decoration: BoxDecoration(
-                            color: Colors.black.withAlpha(140),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Center(
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.2,
-                                color: Colors.white,
-                              ),
+                        child: const Center(
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.4,
+                              color: Colors.white,
                             ),
                           ),
                         ),
-                      ],
-                    )
-                  : const Center(
-                      child: CircularProgressIndicator(color: Colors.white),
-                    )),
+                      ),
+                  ],
+                ),
         ),
       );
     }
@@ -1003,26 +1117,89 @@ class _MediaSlideItemState extends State<_MediaSlideItem> with TickerProviderSta
           height: screenSize.height,
           child: Center(
             child: _mediaBytes != null && _mediaBytes!.isNotEmpty
-                ? Image.memory(
-                    _mediaBytes!,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) {
-                      return const Center(
+                ? Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Image.memory(
+                        _mediaBytes!,
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.broken_image_rounded, color: Colors.white54, size: 48),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Unable to display image',
+                                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                                ),
+                                const SizedBox(height: 12),
+                                OutlinedButton.icon(
+                                  onPressed: () {
+                                    setState(() {
+                                      _mediaBytes = null;
+                                    });
+                                    _loadMediaBytes();
+                                  },
+                                  icon: const Icon(Icons.refresh_rounded, size: 16, color: Colors.white),
+                                  label: const Text('Retry Download', style: TextStyle(color: Colors.white, fontSize: 12)),
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(color: Colors.white30),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      if (_isUploading && messageId != null)
+                        MediaUploadCircularProgressBar(
+                          messageId: messageId,
+                          size: 56,
+                          onCancel: widget.onDismiss,
+                        ),
+                    ],
+                  )
+                : (_isLoadingBytes
+                    ? const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(color: Colors.white),
+                          SizedBox(height: 12),
+                          Text(
+                            'Loading image...',
+                            style: TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        ],
+                      )
+                    : Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.broken_image_rounded, color: Colors.white54, size: 48),
-                            SizedBox(height: 8),
-                            Text(
-                              'Unable to display image',
+                            const Icon(Icons.cloud_download_outlined, color: Colors.white54, size: 48),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Media not downloaded yet',
                               style: TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                _loadMediaBytes();
+                              },
+                              icon: const Icon(Icons.download_rounded, size: 16),
+                              label: const Text('Download Media'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: MineTheme.accentGreen,
+                                foregroundColor: Colors.black,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              ),
                             ),
                           ],
                         ),
-                      );
-                    },
-                  )
-                : const CircularProgressIndicator(color: Colors.white),
+                      )),
           ),
         ),
       ),

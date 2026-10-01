@@ -408,7 +408,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   },
                   style: const TextStyle(color: MineTheme.textLight, fontSize: 15),
                   decoration: InputDecoration(
-                    hintText: 'Search chats or 12-digit User ID...',
+                    hintText: 'Search chats or User ID...',
                     hintStyle: const TextStyle(color: Color(0xFF8696A0), fontSize: 14),
                     prefixIcon: const Icon(Icons.search, color: Color(0xFF8696A0), size: 20),
                     prefixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),

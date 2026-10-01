@@ -548,8 +548,9 @@ class ConnectionManager extends ChangeNotifier {
     bool saveHistory = false,
     MessageModel? replyTo,
     String? replySenderName,
+    String? customMessageId,
   }) async {
-    final messageId = 'msg_${DateTime.now().millisecondsSinceEpoch}_${myIdentity.deviceId.hashCode.abs()}';
+    final messageId = customMessageId ?? 'msg_${DateTime.now().millisecondsSinceEpoch}_${myIdentity.deviceId.hashCode.abs()}';
     final now = DateTime.now();
 
     String? rText;
@@ -631,6 +632,7 @@ class ConnectionManager extends ChangeNotifier {
           timestamp: now,
         );
         signalingClient.sendEnvelope(envelope, retainInMailbox: true);
+        EphemeralMediaService.getUploadProgressNotifier(messageId).value = 1.0;
 
         await chatRepository.updateMessageStatus(messageId, MessageStatus.sent);
         final sentMessage = message.copyWith(status: MessageStatus.sent);

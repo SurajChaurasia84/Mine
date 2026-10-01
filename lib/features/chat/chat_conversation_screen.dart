@@ -383,6 +383,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
         isExpired: false,
         decryptedContent: jsonEncode({
           'type': 'ephemeral_media',
+          'media_type': actualIsVideo ? 'video' : 'photo',
           'mediaType': actualIsVideo ? 'video' : 'photo',
           'caption': itemCaption,
         }),
@@ -411,6 +412,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
           saveHistory: _saveHistory,
           replyTo: (i == 0) ? replyTo : null,
           replySenderName: (i == 0) ? replySenderName : null,
+          customMessageId: tempMessageId,
         );
 
         connManager.ephemeralMediaService.cacheMedia(sentMsg.id, finalBytes);
@@ -426,7 +428,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
           });
           _scrollToBottom(animate: true);
         }
-      } catch (_) {}
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _messages.removeWhere((m) => m.id == tempMessageId);
+          });
+        }
+      }
     }
   }
 
@@ -631,7 +639,10 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
       final payload = EphemeralMediaPayload.tryParse(m.decryptedContent ?? '');
       final isItemMe = m.senderId.trim().toUpperCase() == connManager.myIdentity.deviceId.trim().toUpperCase();
       final senderName = isItemMe ? 'You' : _currentContact.nickname;
-      final mediaType = payload?.mediaType ?? (m.messageType == MessageType.video ? 'video' : 'photo');
+      final isVideo = m.messageType == MessageType.video ||
+          payload?.mediaType == 'video' ||
+          (m.decryptedContent?.contains('"video"') == true);
+      final mediaType = isVideo ? 'video' : 'photo';
 
       Uint8List? initialBytes;
       if (m.id == msg.id) {
@@ -659,12 +670,15 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> with Wi
     if (initialIndex == -1) {
       final payload = EphemeralMediaPayload.tryParse(msg.decryptedContent ?? '');
       final isMe = msg.senderId.trim().toUpperCase() == connManager.myIdentity.deviceId.trim().toUpperCase();
+      final isVideo = msg.messageType == MessageType.video ||
+          payload?.mediaType == 'video' ||
+          (msg.decryptedContent?.contains('"video"') == true);
       items.add(
         EphemeralMediaItem(
           message: msg,
           payload: payload,
           rawBytes: rawBytes,
-          mediaType: payload?.mediaType ?? (msg.messageType == MessageType.video ? 'video' : 'photo'),
+          mediaType: isVideo ? 'video' : 'photo',
           senderName: isMe ? 'You' : _currentContact.nickname,
           caption: payload?.caption,
         ),

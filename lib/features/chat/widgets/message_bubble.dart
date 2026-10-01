@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' show ImageByteFormat;
 import 'package:flutter/gestures.dart';
@@ -293,6 +294,7 @@ class MessageBubble extends StatelessWidget {
                       hasCaption: hasCaption,
                       maxBubbleWidth: bubbleWidth,
                       onOpenMedia: onOpenMedia,
+                      onDelete: onDelete,
                     ),
                   ),
 
@@ -344,13 +346,10 @@ class MessageBubble extends StatelessWidget {
     final defaultColor = isOverlay ? Colors.white70 : MineTheme.textMuted;
     switch (status) {
       case MessageStatus.pending:
-        return SizedBox(
-          width: 11,
-          height: 11,
-          child: CircularProgressIndicator(
-            strokeWidth: 1.5,
-            color: isOverlay ? Colors.white : MineTheme.accentGreen,
-          ),
+        return Icon(
+          Icons.access_time_rounded,
+          size: isOverlay ? 11 : 12,
+          color: defaultColor,
         );
       case MessageStatus.sent:
         return Icon(Icons.check, size: 13, color: defaultColor);
@@ -533,6 +532,7 @@ class _InlineMediaContent extends StatefulWidget {
   final bool hasCaption;
   final double maxBubbleWidth;
   final Function(MessageModel message, Uint8List rawBytes)? onOpenMedia;
+  final VoidCallback? onDelete;
 
   const _InlineMediaContent({
     required this.message,
@@ -541,6 +541,7 @@ class _InlineMediaContent extends StatefulWidget {
     required this.hasCaption,
     required this.maxBubbleWidth,
     this.onOpenMedia,
+    this.onDelete,
   });
 
   @override
@@ -685,8 +686,8 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
 
     return GestureDetector(
       onTap: () {
-        if (_mediaBytes != null && _mediaBytes!.isNotEmpty) {
-          widget.onOpenMedia?.call(widget.message, _mediaBytes!);
+        if (hasContent) {
+          widget.onOpenMedia?.call(widget.message, _mediaBytes ?? persistentThumb!);
         } else {
           _loadMedia();
         }
@@ -748,29 +749,11 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
     }
 
   Widget _buildCenterOverlay({required bool isVideo}) {
-    // 1. Outgoing media upload in progress
+    // 1. Outgoing media upload in progress (WhatsApp-style circular progress bar)
     if (widget.isMe && widget.message.status == MessageStatus.pending) {
-      return Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: Colors.black.withAlpha(160),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white30, width: 1.2),
-          boxShadow: const [
-            BoxShadow(color: Colors.black54, blurRadius: 8),
-          ],
-        ),
-        child: const Center(
-          child: SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.2,
-              color: MineTheme.accentGreen,
-            ),
-          ),
-        ),
+      return MediaUploadCircularProgressBar(
+        messageId: widget.message.id,
+        onCancel: widget.onDelete,
       );
     }
 
@@ -910,13 +893,10 @@ class _InlineMediaContentState extends State<_InlineMediaContent> {
   Widget _buildOverlayStatusIcon(MessageStatus status) {
     switch (status) {
       case MessageStatus.pending:
-        return const SizedBox(
-          width: 10,
-          height: 10,
-          child: CircularProgressIndicator(
-            strokeWidth: 1.4,
-            color: Colors.white,
-          ),
+        return const Icon(
+          Icons.access_time_rounded,
+          size: 11,
+          color: Colors.white70,
         );
       case MessageStatus.sent:
         return const Icon(Icons.check, size: 12, color: Colors.white70);
@@ -1372,6 +1352,89 @@ class _InlineImageThumbnailState extends State<_InlineImageThumbnail> {
           errorBuilder: (context, error, stackTrace) {
             return const Center(
               child: Icon(Icons.broken_image_rounded, color: Colors.white54, size: 36),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// WhatsApp-style circular progress bar showing real-time upload progress with cancel 'X'
+class MediaUploadCircularProgressBar extends StatelessWidget {
+  final String messageId;
+  final VoidCallback? onCancel;
+  final double size;
+
+  const MediaUploadCircularProgressBar({
+    super.key,
+    required this.messageId,
+    this.onCancel,
+    this.size = 48,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final notifier = EphemeralMediaService.getUploadProgressNotifier(messageId);
+    final innerSize = size * 0.79;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        EphemeralMediaService.cancelUpload(messageId);
+        onCancel?.call();
+      },
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: Colors.black.withAlpha(145),
+          shape: BoxShape.circle,
+          boxShadow: const [
+            BoxShadow(color: Colors.black45, blurRadius: 6),
+          ],
+        ),
+        child: ValueListenableBuilder<double>(
+          valueListenable: notifier,
+          builder: (context, progressValue, _) {
+            final isDeterminate = progressValue > 0.01;
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                // Background track ring
+                SizedBox(
+                  width: innerSize,
+                  height: innerSize,
+                  child: CircularProgressIndicator(
+                    value: 1.0,
+                    strokeWidth: 3.2,
+                    color: Colors.white.withAlpha(45),
+                  ),
+                ),
+                // Real determinate progress fill (or subtle indeterminate if 0)
+                SizedBox(
+                  width: innerSize,
+                  height: innerSize,
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween<double>(begin: 0.0, end: progressValue.clamp(0.0, 1.0)),
+                    duration: const Duration(milliseconds: 160),
+                    curve: Curves.easeOut,
+                    builder: (context, animatedVal, _) {
+                      return CircularProgressIndicator(
+                        value: isDeterminate ? animatedVal : null,
+                        strokeWidth: 3.2,
+                        color: Colors.white,
+                      );
+                    },
+                  ),
+                ),
+                // WhatsApp center close 'X' icon (tappable to cancel)
+                Icon(
+                  Icons.close_rounded,
+                  color: Colors.white,
+                  size: size * 0.40,
+                ),
+              ],
             );
           },
         ),

@@ -5,6 +5,7 @@ import 'package:local_auth_android/local_auth_android.dart';
 
 class AppLockService {
   static final LocalAuthentication _auth = LocalAuthentication();
+  static bool _authInProgress = false;
 
   /// Check if the device has biometric or screen lock hardware/support available
   static Future<bool> isDeviceSupported() async {
@@ -37,6 +38,12 @@ class AppLockService {
     bool allowDeviceCredentials = true,
     String reason = 'Unlock Mine',
   }) async {
+    if (_authInProgress) {
+      debugPrint('[AppLockService] Authentication already in progress, skipping duplicate call.');
+      return false;
+    }
+
+    _authInProgress = true;
     try {
       final bool supported = await isDeviceSupported();
       if (!supported) {
@@ -61,12 +68,17 @@ class AppLockService {
         persistAcrossBackgrounding: true,
         sensitiveTransaction: false,
       );
+    } on LocalAuthException catch (e) {
+      debugPrint('[AppLockService] local_auth exception: ${e.code} - ${e.description}');
+      return false;
     } on PlatformException catch (e) {
       debugPrint('[AppLockService] authenticate error: ${e.code} - ${e.message}');
       return false;
     } catch (e) {
       debugPrint('[AppLockService] unexpected error: $e');
       return false;
+    } finally {
+      _authInProgress = false;
     }
   }
 
@@ -74,6 +86,8 @@ class AppLockService {
   static Future<void> stopAuthentication() async {
     try {
       await _auth.stopAuthentication();
-    } catch (_) {}
+    } catch (_) {} finally {
+      _authInProgress = false;
+    }
   }
 }
